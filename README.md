@@ -45,7 +45,7 @@
 
 ## Overview
 
-**FORMly** is a full-featured questionnaire platform designed for teams that need to create, distribute, and analyze surveys at scale. It ships with a modern admin dashboard, a builder supporting **22 different question types**, per-survey analytics, a full notification system, and role-based access control.
+**FORMly** is a full-featured questionnaire platform designed for teams that need to create, distribute, and analyze surveys at scale. It ships with a modern admin dashboard, a builder supporting **23 different question types**, per-survey analytics, a full notification system, and role-based access control.
 
 Whether you're running a customer satisfaction survey, an employee engagement pulse, or a market research study, FORMly gives you the tooling to launch in minutes and understand the results immediately.
 
@@ -55,7 +55,7 @@ Whether you're running a customer satisfaction survey, an employee engagement pu
 
 ### 🎨 Questionnaire Builder
 
-- **22 question types** — short/long text, email, phone, URL, number, rating, NPS, slider, single choice, multiple choice, dropdown, yes/no, Likert, ranking, date, time, datetime, matrix, file upload, text block, and section
+- **23 question types** — short/long text, email, phone, URL, number, rating, linear scale, NPS, slider, single choice, multiple choice, dropdown, yes/no, Likert, ranking, date, time, datetime, matrix, file upload, text block, and section
 - **Inline editing** — click any question on the canvas to edit it directly
 - **System lists** — reusable option lists (countries, languages, currencies, …) managed from the admin panel
 - **Live preview** — see exactly how each question will look to respondents
@@ -77,6 +77,7 @@ Whether you're running a customer satisfaction survey, an employee engagement pu
 - **File uploads** with drag-and-drop, progress bar, image previews, and multi-file support
 - **Anonymous responses** for surveys configured as such
 - **Submission lock** — prevents duplicate submissions
+- **Users can review their own responses** from `/my-questionnaires` — completed assignments link straight to the response detail view
 
 ### 📊 Analytics
 
@@ -136,7 +137,7 @@ Whether you're running a customer satisfaction survey, an employee engagement pu
 | DB adapter | psycopg | 3.3.5 |
 | Image handling | Pillow | 12.3.0 |
 | Env config | python-dotenv | 1.2.3 |
-| Cache | redis | 8.1.0 |
+| Cache | redis | 7.x |
 | Server | Gunicorn | 23.0.0 |
 | Testing | pytest + pytest-django + factory-boy | 8.3 / 4.9 / 3.3 |
 
@@ -152,7 +153,6 @@ Whether you're running a customer satisfaction survey, an employee engagement pu
 | Forms | react-hook-form + zod | 7.53 / 3.23 |
 | Themes | next-themes | 0.4 |
 | Toasts | sonner | 1.7 |
-| Drag & Drop | @dnd-kit | 6.1 |
 | HTTP | axios | 1.7 |
 | Font | Vazirmatn | — |
 
@@ -162,6 +162,7 @@ Whether you're running a customer satisfaction survey, an employee engagement pu
 |---|---|
 | Docker | Container runtime |
 | Docker Compose | Multi-service orchestration |
+| Nginx | Reverse proxy (dev + prod) |
 | Git | Version control |
 
 ---
@@ -212,8 +213,8 @@ formly/
 │   ├── config/
 │   │   ├── settings/
 │   │   │   ├── base.py
-│   │   │   ├── dev.py
-│   │   │   ├── prod.py
+│   │   │   ├── development.py
+│   │   │   ├── production.py
 │   │   │   └── test.py
 │   │   ├── api/v1/urls.py
 │   │   ├── urls.py
@@ -232,9 +233,12 @@ formly/
 │   │
 │   ├── tests/
 │   ├── manage.py
-│   ├── requirements.txt
+│   ├── requirements/
+│   │   ├── base.txt
+│   │   ├── development.txt
+│   │   └── production.txt
 │   ├── pytest.ini
-│   ├── Dockerfile
+│   ├── Dockerfile.dev
 │   └── .env.example
 │
 ├── frontend/
@@ -255,10 +259,14 @@ formly/
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── next.config.ts
-│   ├── postcss.config.js
+│   ├── postcss.config.mjs
 │   └── .env.local.example
 │
-├── docker-compose.yml
+├── nginx/
+│   ├── nginx.dev.conf
+│   └── nginx.prod.conf
+│
+├── docker-compose.dev.yml
 ├── .env.example
 ├── .gitignore
 ├── .gitattributes
@@ -331,46 +339,53 @@ POSTGRES_PASSWORD=choose-a-strong-password
 #### Step 3 — Build and start the stack
 
 ```bash
-docker compose up --build -d
+docker compose -f docker-compose.dev.yml up --build -d
 ```
 
-Wait until both containers are healthy:
+This starts four services: **db** (PostgreSQL), **redis**, **backend** (Django + Gunicorn), and **nginx** (reverse proxy on port 80).
+
+Wait until the containers are healthy:
 
 ```bash
-docker compose ps
+docker compose -f docker-compose.dev.yml ps
 ```
 
-You should see `backend` and `db` as running.
+You should see `db`, `redis`, and `backend` as running.
 
 #### Step 4 — Create the database schema
 
 ```bash
-docker compose exec backend python manage.py makemigrations q_accounts
-docker compose exec backend python manage.py makemigrations \
-    q_surveys q_assignments q_responses q_notifications q_activity
-docker compose exec backend python manage.py migrate
+docker compose -f docker-compose.dev.yml exec backend python manage.py migrate
 ```
 
 #### Step 5 — Create an admin user
 
 ```bash
-docker compose exec backend python manage.py createsuperuser
+docker compose -f docker-compose.dev.yml exec backend python manage.py createsuperuser
 ```
 
-#### Step 6 — Set up frontend
+#### Step 6 — (Optional) Seed demo data
 
 ```bash
-cd frontend
-cp .env.local.example .env.local
-npm install --legacy-peer-deps
+docker compose -f docker-compose.dev.yml exec backend python manage.py seed_demo
 ```
 
-#### Step 7 — Run the frontend
+This creates demo users, surveys, assignments, and responses. All demo accounts use the password `Demo!2345`:
+
+| Email | Role |
+|---|---|
+| `admin@formly.local` | superuser |
+| `creator1@formly.local` | creator |
+| `user1@formly.local` | regular user |
+
+#### Step 7 — Set up and run the frontend
 
 In a separate terminal:
 
 ```bash
 cd frontend
+cp .env.local.example .env.local
+npm install --legacy-peer-deps
 npm run dev
 ```
 
@@ -379,7 +394,8 @@ npm run dev
 | Service | URL |
 |---|---|
 | **Frontend** | http://localhost:3000 |
-| **Backend API** | http://localhost:8000/api/v1/ |
+| **Backend (via nginx)** | http://localhost/api/v1/ |
+| **Backend (direct)** | http://localhost:8000/api/v1/ |
 | **API Docs (Swagger)** | http://localhost:8000/api/docs/ |
 | **Admin Panel** | http://localhost:8000/admin/ |
 | **Health Check** | http://localhost:8000/health/ |
@@ -410,7 +426,7 @@ source venv/bin/activate          # Linux / macOS
 venv\Scripts\activate             # Windows
 
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r requirements/development.txt
 
 cp .env.example .env
 # Edit .env:
@@ -421,8 +437,6 @@ cp .env.example .env
 #### Step 3 — Run migrations
 
 ```bash
-python manage.py makemigrations q_accounts
-python manage.py makemigrations q_surveys q_assignments q_responses q_notifications q_activity
 python manage.py migrate
 ```
 
@@ -505,26 +519,26 @@ Once the initial setup is complete, here are the day-to-day commands.
 **Start everything (Docker):**
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.dev.yml up -d
 ```
 
 **Stop everything (Docker) — keeps data:**
 
 ```bash
-docker compose down
+docker compose -f docker-compose.dev.yml down
 ```
 
-**Restart backend only (after code changes if not using volume mounts):**
+**Restart backend only (after code changes):**
 
 ```bash
-docker compose restart backend
+docker compose -f docker-compose.dev.yml restart backend
 ```
 
 **Rebuild backend after dependency changes:**
 
 ```bash
-docker compose build --no-cache backend
-docker compose up -d backend
+docker compose -f docker-compose.dev.yml build --no-cache backend
+docker compose -f docker-compose.dev.yml up -d backend
 ```
 
 **Frontend dev server:**
@@ -556,25 +570,25 @@ python manage.py runserver 8000
 **All services:**
 
 ```bash
-docker compose logs -f
+docker compose -f docker-compose.dev.yml logs -f
 ```
 
 **Backend only:**
 
 ```bash
-docker compose logs -f backend
+docker compose -f docker-compose.dev.yml logs -f backend
 ```
 
 **Database only:**
 
 ```bash
-docker compose logs -f db
+docker compose -f docker-compose.dev.yml logs -f db
 ```
 
 **Last 100 lines:**
 
 ```bash
-docker compose logs --tail=100 backend
+docker compose -f docker-compose.dev.yml logs --tail=100 backend
 ```
 
 ### Accessing Shells
@@ -582,41 +596,41 @@ docker compose logs --tail=100 backend
 **Django shell (Python REPL with models loaded):**
 
 ```bash
-docker compose exec backend python manage.py shell
+docker compose -f docker-compose.dev.yml exec backend python manage.py shell
 ```
 
 **Bash inside backend container:**
 
 ```bash
-docker compose exec backend bash
+docker compose -f docker-compose.dev.yml exec backend bash
 ```
 
 **PostgreSQL psql:**
 
 ```bash
-docker compose exec db psql -U formly -d formly
+docker compose -f docker-compose.dev.yml exec db psql -U formly -d formly
 ```
 
 **Common Django management commands:**
 
 ```bash
 # Create a new superuser
-docker compose exec backend python manage.py createsuperuser
+docker compose -f docker-compose.dev.yml exec backend python manage.py createsuperuser
 
 # Create migrations after model changes
-docker compose exec backend python manage.py makemigrations
+docker compose -f docker-compose.dev.yml exec backend python manage.py makemigrations
 
 # Apply migrations
-docker compose exec backend python manage.py migrate
+docker compose -f docker-compose.dev.yml exec backend python manage.py migrate
 
 # Collect static files (for production)
-docker compose exec backend python manage.py collectstatic
+docker compose -f docker-compose.dev.yml exec backend python manage.py collectstatic
+
+# Seed demo data
+docker compose -f docker-compose.dev.yml exec backend python manage.py seed_demo
 
 # Inspect migration status
-docker compose exec backend python manage.py showmigrations
-
-# Reverse all migrations for an app (careful!)
-docker compose exec backend python manage.py migrate q_surveys zero
+docker compose -f docker-compose.dev.yml exec backend python manage.py showmigrations
 ```
 
 ### Resetting the Database
@@ -626,21 +640,18 @@ docker compose exec backend python manage.py migrate q_surveys zero
 **Reset everything including volumes:**
 
 ```bash
-docker compose down -v
-docker compose up -d
-docker compose exec backend python manage.py makemigrations q_accounts
-docker compose exec backend python manage.py makemigrations \
-    q_surveys q_assignments q_responses q_notifications q_activity
-docker compose exec backend python manage.py migrate
-docker compose exec backend python manage.py createsuperuser
+docker compose -f docker-compose.dev.yml down -v
+docker compose -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.dev.yml exec backend python manage.py migrate
+docker compose -f docker-compose.dev.yml exec backend python manage.py createsuperuser
 ```
 
 **Reset just the database (keep containers):**
 
 ```bash
-docker compose exec db psql -U formly -d postgres -c "DROP DATABASE formly;"
-docker compose exec db psql -U formly -d postgres -c "CREATE DATABASE formly;"
-docker compose exec backend python manage.py migrate
+docker compose -f docker-compose.dev.yml exec db psql -U formly -d postgres -c "DROP DATABASE formly;"
+docker compose -f docker-compose.dev.yml exec db psql -U formly -d postgres -c "CREATE DATABASE formly;"
+docker compose -f docker-compose.dev.yml exec backend python manage.py migrate
 ```
 
 **Clear only media files (uploaded avatars, covers, etc.):**
@@ -655,7 +666,7 @@ rm -rf backend/media
 
 ### Troubleshooting
 
-**Port already in use (3000 or 8000):**
+**Port already in use (80, 3000, or 8000):**
 
 ```bash
 # Windows
@@ -666,12 +677,7 @@ taskkill /PID <pid> /F
 lsof -ti:3000 | xargs kill -9
 ```
 
-Or change ports in `docker-compose.yml`:
-
-```yaml
-ports:
-  - "8001:8000"
-```
+Or change ports in `docker-compose.dev.yml`.
 
 **"Cannot connect to Docker daemon":**
 
@@ -681,23 +687,23 @@ Make sure Docker Desktop is running.
 
 ```bash
 # Check db is healthy
-docker compose ps db
+docker compose -f docker-compose.dev.yml ps db
 
 # Check logs
-docker compose logs db
+docker compose -f docker-compose.dev.yml logs db
 
 # Test connection
-docker compose exec backend python -c "import psycopg; print('psycopg OK')"
+docker compose -f docker-compose.dev.yml exec backend python -c "import psycopg; print('psycopg OK')"
 ```
 
 **Migrations fail with "table already exists":**
 
 ```bash
 # Check applied migrations
-docker compose exec backend python manage.py showmigrations
+docker compose -f docker-compose.dev.yml exec backend python manage.py showmigrations
 
 # Fake a specific migration (only if you're sure)
-docker compose exec backend python manage.py migrate q_surveys --fake
+docker compose -f docker-compose.dev.yml exec backend python manage.py migrate q_surveys --fake
 ```
 
 **Frontend: Module not found errors:**
@@ -720,7 +726,7 @@ CORS_ALLOW_ALL_ORIGINS=True
 Then restart:
 
 ```bash
-docker compose restart backend
+docker compose -f docker-compose.dev.yml restart backend
 ```
 
 **Images not loading (avatars, covers):**
@@ -751,7 +757,7 @@ Then restart `npm run dev`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `DJANGO_SETTINGS_MODULE` | `config.settings.dev` | Django settings module |
+| `DJANGO_SETTINGS_MODULE` | `config.settings.development` | Django settings module |
 | `DJANGO_SECRET_KEY` | — | **Required in production** (≥ 32 bytes) |
 | `DJANGO_DEBUG` | `True` | Debug mode |
 | `DJANGO_ALLOWED_HOSTS` | `*` | Comma-separated allowed hosts |
@@ -762,7 +768,7 @@ Then restart `npm run dev`.
 | `POSTGRES_PORT` | `5432` | Database port |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated origins |
 | `CORS_ALLOW_ALL_ORIGINS` | `True` (dev) | Allow all origins (dev only) |
-| `ALLOW_PUBLIC_REGISTRATION` | `False` | Allow public sign-up |
+| `ALLOW_PUBLIC_REGISTRATION` | `True` (dev) | Allow public sign-up |
 | `EMAIL_VERIFICATION_ENABLED` | `True` | Require email verification |
 | `REQUIRE_VERIFIED_TO_LOGIN` | `False` | Block login until verified |
 | `FRONTEND_URL` | `http://localhost:3000` | Used in email links |
@@ -809,7 +815,7 @@ Survey
 Question
   ├── id (UUID)
   ├── survey → Survey
-  ├── type (22 choices)
+  ├── type (23 choices)
   ├── title, description, required, order
   ├── settings (JSONField)
   └── system_list → SystemList (nullable)
@@ -943,7 +949,7 @@ All endpoints are prefixed with `/api/v1/`.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/responses/` | List responses |
+| GET | `/responses/` | List responses (admins see all, users see own) |
 | GET | `/responses/{id}/` | Retrieve a response with all answers |
 | POST | `/responses/save-draft/` | Create or update a draft |
 | POST | `/responses/{id}/submit/` | Submit a draft |
@@ -982,7 +988,7 @@ FORMly uses Django's built-in permission system. Roles are derived from flags:
 |---|---|---|
 | **admin** | `is_superuser = True` | Full access: manage users, surveys, assignments, responses, analytics, activity |
 | **creator** | Has permission `q_accounts.can_create_survey` | Create and edit surveys, assign them, view analytics for own surveys |
-| **user** | Default | View and answer assigned surveys only |
+| **user** | Default | View and answer assigned surveys, review own responses |
 
 **Frontend route guards:**
 
@@ -1017,7 +1023,7 @@ FORMly uses Django's built-in permission system. Roles are derived from flags:
 | `DROPDOWN` | Select menu |
 | `YES_NO` | Two-button toggle |
 | `LIKERT` | Likert scale |
-| `RANKING` | Drag-and-drop ranking |
+| `RANKING` | Ranked list |
 | `DATE` | Date picker |
 | `TIME` | Time picker |
 | `DATETIME` | Date and time picker |
@@ -1034,16 +1040,26 @@ FORMly uses Django's built-in permission system. Roles are derived from flags:
 
 ```bash
 # Run all tests
-docker compose exec backend pytest --create-db -q
+docker compose -f docker-compose.dev.yml exec backend pytest --create-db -q
 
 # With coverage report
-docker compose exec backend pytest --create-db --cov=apps --cov-report=html
+docker compose -f docker-compose.dev.yml exec backend pytest --create-db --cov=apps --cov-report=html
 
 # Run a specific test file
-docker compose exec backend pytest tests/test_surveys.py -v
+docker compose -f docker-compose.dev.yml exec backend pytest tests/test_surveys.py -v
 ```
 
-Expected result: **94 passing tests**.
+Expected result: **173 passing tests**, coverage ≈ 83%.
+
+Coverage includes:
+
+- Auth flows (login, register, verify, password reset, change password)
+- Survey CRUD, question CRUD, reorder, publish / close / archive
+- Assignments (single, bulk, `/mine` scoping, status transitions, overdue)
+- Responses (draft, submit, file upload, anonymous)
+- Analytics (query-count regression tests, cache invalidation, comparison)
+- Notifications and activity logs
+- Performance regression tests (assert constant query counts)
 
 ### Frontend
 
