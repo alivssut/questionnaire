@@ -143,22 +143,29 @@ export function Header({ onOpenSidebar }: { onOpenSidebar: () => void }) {
       <button
         type="button"
         aria-label="باز کردن منوی کناری"
-        className="lg:hidden text-muted-foreground hover:text-foreground p-2 rounded-lg hover:bg-accent transition-colors"
+        className="lg:hidden shrink-0 text-muted-foreground hover:text-foreground p-2 rounded-lg hover:bg-accent transition-colors"
         onClick={onOpenSidebar}
       >
         <Menu size={20} />
       </button>
 
       {/* ── Breadcrumb ─────────────────────────────────────── */}
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex items-center gap-2 text-sm shrink-0 min-w-0">
         <span className="text-muted-foreground hidden sm:inline">FORMly</span>
         <span className="text-muted-foreground hidden sm:inline">/</span>
-        <span className="font-medium">{title}</span>
+        <span className="font-medium truncate">{title}</span>
       </div>
 
-      {/* ── Search (admin/creator only) ────────────────────── */}
+      {/* ── Search (admin/creator only, md+) ───────────────── */}
+      {/*
+        `flex-1` on the wrapper absorbs all remaining space between
+        the breadcrumb and the action cluster, keeping the search box
+        centered. When this wrapper isn't rendered (user without the
+        permission, or screen < md), the action cluster's `ms-auto`
+        below is what pushes it to the inline-end of the header.
+      */}
       {canSearch && (
-        <div className="flex-1 hidden md:flex justify-center">
+        <div className="hidden md:flex flex-1 justify-center min-w-0">
           <div className="relative max-w-sm w-full">
             <Search
               size={14}
@@ -183,7 +190,16 @@ export function Header({ onOpenSidebar }: { onOpenSidebar: () => void }) {
       )}
 
       {/* ── Right actions ──────────────────────────────────── */}
-      <div className={cn('flex items-center gap-2', canSearch ? '' : 'ml-auto')}>
+      {/*
+        IMPORTANT: use `ms-auto` (margin-inline-start: auto) instead of
+        `ml-auto`. The app is RTL (html dir="rtl"), where the physical
+        `margin-left` pushes the element toward the START (right) — the
+        opposite of what we want. `ms-auto` uses the logical inline
+        edge, so it always pushes toward the END regardless of writing
+        direction. This makes the layout work identically with and
+        without the search box.
+      */}
+      <div className="flex items-center gap-2 ms-auto shrink-0">
         <ThemeToggle />
 
         <NotificationBell />
