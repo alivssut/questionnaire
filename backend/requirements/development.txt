@@ -23,3 +23,6 @@ ipython==9.17.1
 # Lint / format (optional but recommended)
 # --------------------------------------------------------------------------- #
 ruff==0.16.7
+
+
+django-debug-toolbar 8.0.0

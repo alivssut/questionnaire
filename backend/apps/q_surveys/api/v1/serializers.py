@@ -12,6 +12,10 @@ from apps.q_surveys.models import (
 )
 
 
+# ═════════════════════════════════════════════════════════════════
+# Option / Matrix — read & write serializers
+# ═════════════════════════════════════════════════════════════════
+
 class QuestionOptionSerializer(serializers.ModelSerializer):
     id = serializers.UUIDField(read_only=True)
 
@@ -53,6 +57,10 @@ class MatrixColumnWriteSerializer(serializers.Serializer):
     order = serializers.IntegerField(min_value=0, required=False)
 
 
+# ═════════════════════════════════════════════════════════════════
+# Question
+# ═════════════════════════════════════════════════════════════════
+
 class QuestionSerializer(serializers.ModelSerializer):
     options = QuestionOptionSerializer(many=True, read_only=True)
     matrix_rows = MatrixRowSerializer(many=True, read_only=True)
@@ -83,6 +91,8 @@ class QuestionWriteSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id"]
 
+    # ── Validation ────────────────────────────────────────────
+
     def validate_survey(self, value):
         if self.instance and self.instance.survey_id != value.id:
             raise serializers.ValidationError(
@@ -93,16 +103,31 @@ class QuestionWriteSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         qtype = attrs.get("type", getattr(self.instance, "type", None))
         settings = attrs.get("settings", getattr(self.instance, "settings", {})) or {}
-        system_list = attrs.get("system_list", getattr(self.instance, "system_list", None))
+        system_list = attrs.get(
+            "system_list", getattr(self.instance, "system_list", None),
+        )
         options = attrs.get("options")
         rows = attrs.get("matrix_rows")
         cols = attrs.get("matrix_columns")
 
+        # Cache existing-child presence once to avoid repeated DB hits.
+        # We only query the DB when the payload didn't supply the value.
+        existing_has_options = False
+        existing_has_matrix_rows = False
+        existing_has_matrix_cols = False
+
+        if self.instance is not None:
+            if options is None:
+                existing_has_options = self.instance.options.exists()
+            if rows is None:
+                existing_has_matrix_rows = self.instance.matrix_rows.exists()
+            if cols is None:
+                existing_has_matrix_cols = self.instance.matrix_columns.exists()
+
+        # Choice types (except YES_NO) need options or a system list.
         if qtype in Question.CHOICE_TYPES and qtype != Question.Type.YES_NO:
-            has_options = bool(options) or (
-                self.instance and self.instance.options.exists()
-            )
-            has_system = bool(system_list) or (
+            has_options = bool(options) or existing_has_options
+            has_system = bool(system_list) or bool(
                 self.instance and self.instance.system_list_id
             )
             if not (has_options or has_system):
@@ -116,6 +141,7 @@ class QuestionWriteSerializer(serializers.ModelSerializer):
                         {"options": "Duplicate option values."}
                     )
 
+        # Numeric range sanity check.
         if qtype in Question.NUMERIC_TYPES:
             mn, mx = settings.get("min"), settings.get("max")
             if mn is not None and mx is not None and mn > mx:
@@ -123,13 +149,10 @@ class QuestionWriteSerializer(serializers.ModelSerializer):
                     {"settings": "`min` cannot be greater than `max`."}
                 )
 
+        # Matrix needs both rows and columns.
         if qtype == Question.Type.MATRIX:
-            has_rows = bool(rows) or (
-                self.instance and self.instance.matrix_rows.exists()
-            )
-            has_cols = bool(cols) or (
-                self.instance and self.instance.matrix_columns.exists()
-            )
+            has_rows = bool(rows) or existing_has_matrix_rows
+            has_cols = bool(cols) or existing_has_matrix_cols
             if not (has_rows and has_cols):
                 raise serializers.ValidationError(
                     {"matrix_rows": "Matrix requires `matrix_rows` and `matrix_columns`."}
@@ -145,6 +168,8 @@ class QuestionWriteSerializer(serializers.ModelSerializer):
             attrs["required"] = False
 
         return attrs
+
+    # ── Child creation ────────────────────────────────────────
 
     def _create_children(self, question, options=None, rows=None, cols=None):
         if options is not None:
@@ -177,6 +202,8 @@ class QuestionWriteSerializer(serializers.ModelSerializer):
                 for i, c in enumerate(cols)
             ])
 
+    # ── CRUD ──────────────────────────────────────────────────
+
     @transaction.atomic
     def create(self, validated_data):
         options = validated_data.pop("options", None)
@@ -192,23 +219,82 @@ class QuestionWriteSerializer(serializers.ModelSerializer):
         rows = validated_data.pop("matrix_rows", None)
         cols = validated_data.pop("matrix_columns", None)
 
+        # Update scalar fields.
         for k, v in validated_data.items():
             setattr(instance, k, v)
         instance.save()
 
-        # Full replace if provided (simplest model for the frontend)
-        if options is not None:
+        # Smart child updates: replace only when the incoming payload
+        # actually differs from what's stored. This avoids churning IDs
+        # and orphaning anything that references them on no-op saves.
+        if options is not None and self._children_differ(
+            instance, "options", options, value_key="value",
+        ):
             instance.options.all().delete()
             self._create_children(instance, options=options)
-        if rows is not None:
+
+        if rows is not None and self._children_differ(
+            instance, "matrix_rows", rows, value_key=None,
+        ):
             instance.matrix_rows.all().delete()
             self._create_children(instance, rows=rows)
-        if cols is not None:
+
+        if cols is not None and self._children_differ(
+            instance, "matrix_columns", cols, value_key="value",
+        ):
             instance.matrix_columns.all().delete()
             self._create_children(instance, cols=cols)
 
         return instance
 
+    @staticmethod
+    def _children_differ(
+        instance,
+        relation: str,
+        incoming: list[dict],
+        value_key: str | None = "value",
+    ) -> bool:
+        """
+        Compare an incoming list of dicts with what's stored in the DB.
+
+        - `value_key=None` → compare (label, order) only (for MatrixRow).
+        - `value_key="value"` → compare (label, value, order).
+
+        Returns True if a replace is warranted.
+        """
+        if value_key is None:
+            existing = list(
+                getattr(instance, relation)
+                .all()
+                .order_by("order")
+                .values_list("label", "order")
+            )
+            incoming_norm = [
+                (item["label"], item.get("order", i))
+                for i, item in enumerate(incoming)
+            ]
+        else:
+            existing = list(
+                getattr(instance, relation)
+                .all()
+                .order_by("order")
+                .values_list("label", value_key, "order")
+            )
+            incoming_norm = [
+                (
+                    item["label"],
+                    item.get(value_key, ""),
+                    item.get("order", i),
+                )
+                for i, item in enumerate(incoming)
+            ]
+
+        return existing != incoming_norm
+
+
+# ═════════════════════════════════════════════════════════════════
+# Survey
+# ═════════════════════════════════════════════════════════════════
 
 class SurveyListSerializer(serializers.ModelSerializer):
     created_by_email = serializers.EmailField(source="created_by.email", read_only=True)
@@ -254,6 +340,10 @@ class SurveyWriteSerializer(serializers.ModelSerializer):
         return v
 
 
+# ═════════════════════════════════════════════════════════════════
+# Misc
+# ═════════════════════════════════════════════════════════════════
+
 class ReorderItemSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     order = serializers.IntegerField(min_value=0)
@@ -271,3 +361,30 @@ class SystemListSerializer(serializers.ModelSerializer):
     class Meta:
         model = SystemList
         fields = ["id", "name", "slug", "type", "is_system", "items", "created_at"]
+        
+
+# ═════════════════════════════════════════════════════════════════
+# Question — lightweight list serializer
+# ═════════════════════════════════════════════════════════════════
+
+class QuestionListSerializer(serializers.ModelSerializer):
+    """
+    Lightweight serializer for list views.
+
+    Omits `options`, `matrix_rows`, and `matrix_columns`, which are
+    only needed in detail view. This lets the list endpoint skip three
+    prefetch queries entirely — the biggest win for high-volume lists.
+
+    The frontend's list views (builder sidebar, review screens) only
+    need the metadata fields below; they fetch the full question tree
+    from the detail endpoint when the user opens a specific question.
+    """
+
+    class Meta:
+        model = Question
+        fields = [
+            "id", "survey", "type", "title", "description",
+            "required", "order", "settings", "system_list",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = fields

@@ -45,9 +45,19 @@ class SurveyAssignmentViewSet(viewsets.ModelViewSet):
         _mark_overdue_throttled()
 
         u = self.request.user
-        qs = SurveyAssignment.objects.select_related(
-            "survey", "user", "assigned_by",
+
+        # select_related for the FKs we actually serialize.
+        #   - survey: needed for `survey_title` (source="survey.title")
+        #   - user: embedded via UserSummarySerializer
+        #   - assigned_by: cheap to select, useful if it ever gets embedded
+        # UserSummarySerializer doesn't touch permissions/groups, so no
+        # prefetch is needed for the user side.
+        qs = (
+            SurveyAssignment.objects
+            .select_related("survey", "user", "assigned_by")
+            .order_by("-assigned_at")
         )
+
         if u.is_superuser:
             return qs
         return qs.filter(user=u)
@@ -129,9 +139,24 @@ class SurveyAssignmentViewSet(viewsets.ModelViewSet):
 
     @decorators.action(detail=False, methods=["get"], url_path="mine")
     def mine(self, request):
-        qs = self.get_queryset().filter(user=request.user).order_by("-assigned_at")
+        """
+        Return ONLY the current user's assignments.
+
+        Important: even superusers see only their own assignments here
+        (this endpoint is meant to drive the "my questionnaires" view
+        for the person who is logged in). For admin-wide listing, use
+        the regular `list` action.
+        """
+        qs = (
+            SurveyAssignment.objects
+            .select_related("survey", "user", "assigned_by")
+            .filter(user=request.user)
+            .order_by("-assigned_at")
+        )
         page = self.paginate_queryset(qs)
-        serializer = self.get_serializer(page if page is not None else qs, many=True)
+        serializer = self.get_serializer(
+            page if page is not None else qs, many=True,
+        )
         if page is not None:
             return self.get_paginated_response(serializer.data)
         return Response(serializer.data)

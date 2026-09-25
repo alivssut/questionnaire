@@ -250,3 +250,26 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
 class EmailVerificationConfirmSerializer(serializers.Serializer):
     token = serializers.CharField()
+    
+
+class UserSummarySerializer(serializers.ModelSerializer):
+    """
+    Lightweight user representation for embedding in nested responses
+    (assignments, activity logs, response details, etc.).
+
+    Omits `permissions`, `notification_preferences`, and timestamps.
+    This avoids one DB query per user for `get_all_permissions()` — the
+    single biggest source of N+1 in list endpoints that embed users.
+
+    `full_name` and `is_admin` are model properties (no DB hit).
+    """
+    full_name = serializers.CharField(read_only=True)
+    is_admin = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = [
+            "id", "email", "first_name", "last_name",
+            "full_name", "avatar", "is_active", "is_admin",
+        ]
+        read_only_fields = fields

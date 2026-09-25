@@ -160,7 +160,16 @@ class Question(BaseModel):
     class Meta:
         db_table = "q_questions"
         ordering = ["order"]
-        indexes = [models.Index(fields=["survey", "order"])]
+        indexes = [
+            models.Index(
+                fields=["survey", "order"],
+                name="q_questions_survey_order_idx",
+            ),
+            # Cover the "list ALL questions ordered by order" case.
+            models.Index(
+                fields=["order", "survey"],
+                name="q_questions_order_survey_idx",
+            ),]
         constraints = [
             models.UniqueConstraint(
                 fields=["survey", "order"],

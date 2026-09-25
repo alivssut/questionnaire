@@ -1,8 +1,12 @@
 from rest_framework import serializers
 
-from apps.q_accounts.api.v1.serializers import UserSerializer
+from apps.q_accounts.api.v1.serializers import UserSummarySerializer
 from apps.q_responses.models import Answer, AnswerFile, SurveyResponse
 
+
+# ═════════════════════════════════════════════════════════════════
+# Files
+# ═════════════════════════════════════════════════════════════════
 
 class AnswerFileSerializer(serializers.ModelSerializer):
     url = serializers.SerializerMethodField()
@@ -21,6 +25,10 @@ class AnswerFileSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(url) if request else url
 
 
+# ═════════════════════════════════════════════════════════════════
+# Answers
+# ═════════════════════════════════════════════════════════════════
+
 class AnswerSerializer(serializers.ModelSerializer):
     files = AnswerFileSerializer(many=True, read_only=True)
 
@@ -38,7 +46,20 @@ class AnswerWriteSerializer(serializers.Serializer):
     value = serializers.JSONField(required=False, default=dict)
 
 
+# ═════════════════════════════════════════════════════════════════
+# Survey Responses
+# ═════════════════════════════════════════════════════════════════
+
 class SurveyResponseSerializer(serializers.ModelSerializer):
+    """
+    Response serializer.
+
+    Uses `UserSummarySerializer` (slim) instead of the full `UserSerializer`
+    to avoid one `get_all_permissions()` query per embedded user — the
+    single biggest source of N+1 in this endpoint.
+
+    For anonymous surveys, `user` is always null.
+    """
     answers = AnswerSerializer(many=True, read_only=True)
     user = serializers.SerializerMethodField()
 
@@ -52,12 +73,18 @@ class SurveyResponseSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_user(self, obj):
+        # Anonymous surveys never expose the respondent.
         if obj.survey.response_mode == "ANONYMOUS":
             return None
         if obj.user_id is None:
             return None
-        return UserSerializer(obj.user).data
+        # `obj.user` is loaded via select_related in the view's queryset.
+        return UserSummarySerializer(obj.user, context=self.context).data
 
+
+# ═════════════════════════════════════════════════════════════════
+# Request serializers
+# ═════════════════════════════════════════════════════════════════
 
 class SaveDraftSerializer(serializers.Serializer):
     survey = serializers.UUIDField()

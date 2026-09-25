@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
 import {
   LayoutDashboard,
   FileText,
@@ -24,37 +23,74 @@ import {
 } from 'lucide-react';
 
 import { useAuth } from '@/shared/providers/auth-provider';
+import { useUserRole, type UserRole } from '@/shared/hooks/use-user-role';
+import { useMyAssignmentsCount } from '@/shared/hooks/use-my-assignments-count';
 import { UserAvatar } from '@/shared/components/ui/user-avatar';
-import { cn } from '@/shared/lib/utils';
+import { cn, toFa } from '@/shared/lib/utils';
+import { UnreadBadge } from '@/features/notifications/components/unread-badge';
 
 // ═════════════════════════════════════════════════════════════════
 // Types & config
 // ═════════════════════════════════════════════════════════════════
 
-type Role = 'admin' | 'creator' | 'user';
-
 interface NavItem {
   label: string;
   href: string;
   icon: typeof LayoutDashboard;
-  roles: Role[];
-  badge?: 'unread' | number;
+  roles: UserRole[];
+  /**
+   * - `'unread'`       → render the live unread-notifications badge
+   * - `'assignments'`  → render the live "my assignments" count (only if > 0)
+   * - number           → render a static numeric badge
+   */
+  badge?: 'unread' | 'assignments' | number;
+  /**
+   * Optional predicate. When provided, the item is shown only if this
+   * returns true (in addition to the role check).
+   */
+  visible?: (ctx: { myAssignmentsCount: number | null }) => boolean;
 }
 
 interface NavSection {
   title?: string;
   icon?: typeof LayoutDashboard;
   items: NavItem[];
-  roles: Role[];
+  roles: UserRole[];
 }
 
 const sections: NavSection[] = [
   {
     title: 'عمومی',
     items: [
-      { label: 'داشبورد', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'creator', 'user'] },
-      { label: 'اعلان‌ها', href: '/notifications', icon: Bell, roles: ['admin', 'creator', 'user'], badge: 'unread' },
-      { label: 'پرسشنامه‌های من', href: '/my-questionnaires', icon: BookOpen, roles: ['user'] },
+      {
+        label: 'داشبورد',
+        href: '/dashboard',
+        icon: LayoutDashboard,
+        roles: ['admin', 'creator', 'user'],
+      },
+      {
+        label: 'اعلان‌ها',
+        href: '/notifications',
+        icon: Bell,
+        roles: ['admin', 'creator', 'user'],
+        badge: 'unread',
+      },
+      {
+        label: 'پرسشنامه‌های من',
+        href: '/my-questionnaires',
+        icon: BookOpen,
+        roles: ['admin', 'creator', 'user'],
+        badge: 'assignments',
+        // Admins only see it when they actually have something to answer.
+        // Creators and regular users always see it (it's part of their
+        // primary workflow). The predicate is evaluated only when set;
+        // the `alwaysShowMyQuestionnaires` short-circuit below handles
+        // the other roles.
+        visible: ({ myAssignmentsCount }) => {
+          if (myAssignmentsCount === null) return false;
+          return myAssignmentsCount > 0;
+        },
+      },
     ],
     roles: ['admin', 'creator', 'user'],
   },
@@ -89,7 +125,7 @@ const sections: NavSection[] = [
   },
 ];
 
-const roleMeta: Record<Role, { label: string; color: string; icon: typeof User }> = {
+const roleMeta: Record<UserRole, { label: string; color: string; icon: typeof User }> = {
   admin: {
     label: 'مدیر',
     color: 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/20',
@@ -114,21 +150,35 @@ const roleMeta: Record<Role, { label: string; color: string; icon: typeof User }
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
-
-  const role: Role = user?.is_admin
-    ? 'admin'
-    : user?.permissions?.includes('can_create_survey')
-    ? 'creator'
-    : 'user';
+  const role = useUserRole();
+  const myAssignmentsCount = useMyAssignmentsCount();
 
   const meta = roleMeta[role];
   const RoleIcon = meta.icon;
+
+  // Regular users and creators always see `/my-questionnaires` —
+  // it is part of their primary workflow (they both respond to surveys).
+  // Admins see it only when they actually have actionable assignments.
+  const alwaysShowMyQuestionnaires = role === 'user' || role === 'creator';
 
   const visibleSections = sections
     .filter((s) => s.roles.includes(role))
     .map((s) => ({
       ...s,
-      items: s.items.filter((i) => i.roles.includes(role)),
+      items: s.items.filter((item) => {
+        if (!item.roles.includes(role)) return false;
+
+        // Short-circuit: for user/creator, "my-questionnaires" is always shown.
+        if (item.href === '/my-questionnaires' && alwaysShowMyQuestionnaires) {
+          return true;
+        }
+
+        // Otherwise, defer to the `visible` predicate if provided.
+        if (item.visible) {
+          return item.visible({ myAssignmentsCount });
+        }
+        return true;
+      }),
     }))
     .filter((s) => s.items.length > 0);
 
@@ -209,9 +259,18 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                     <span className="flex-1 truncate">{item.label}</span>
 
                     {item.badge === 'unread' && <UnreadBadge />}
+
+                    {item.badge === 'assignments' &&
+                      myAssignmentsCount !== null &&
+                      myAssignmentsCount > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-primary/15 text-primary">
+                          {toFa(myAssignmentsCount)}
+                        </span>
+                      )}
+
                     {typeof item.badge === 'number' && item.badge > 0 && (
                       <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-primary/15 text-primary">
-                        {item.badge}
+                        {toFa(item.badge)}
                       </span>
                     )}
 
@@ -239,10 +298,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           onClick={onNavigate}
           className="flex items-center gap-3 p-2 rounded-xl hover:bg-accent/70 transition-all group"
         >
-          {/* Avatar with status */}
           <UserAvatar user={user} size="lg" online />
 
-          {/* Info */}
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold truncate leading-tight">
               {user?.full_name || user?.email}
@@ -260,7 +317,6 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             </div>
           </div>
 
-          {/* Logout */}
           <button
             type="button"
             onClick={(e) => {
@@ -276,41 +332,5 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         </Link>
       </div>
     </aside>
-  );
-}
-
-// ═════════════════════════════════════════════════════════════════
-// Unread badge — polls the notifications endpoint
-// ═════════════════════════════════════════════════════════════════
-
-function UnreadBadge() {
-  const [count, setCount] = useState<number>(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    const fetchCount = () => {
-      import('@/features/notifications/api')
-        .then(({ notificationsApi }) => notificationsApi.unreadCount())
-        .then((n) => {
-          if (!cancelled) setCount(n);
-        })
-        .catch(() => {
-          /* silent */
-        });
-    };
-    fetchCount();
-    const t = setInterval(fetchCount, 30_000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, []);
-
-  if (count === 0) return null;
-
-  return (
-    <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-destructive text-destructive-foreground text-[9px] font-bold flex items-center justify-center flex-shrink-0">
-      {count > 99 ? '۹۹+' : count}
-    </span>
   );
 }

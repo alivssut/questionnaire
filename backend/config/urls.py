@@ -31,5 +31,11 @@ urlpatterns = [
     path("api/v1/", include("config.api.v1.urls")),
 ]
 
+# ── Dev-only: Django Debug Toolbar ─────────────────────────────
+if settings.DEBUG and "debug_toolbar" in settings.INSTALLED_APPS:
+    urlpatterns += [
+        path("__debug__/", include("debug_toolbar.urls")),
+    ]
+
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

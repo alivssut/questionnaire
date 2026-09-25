@@ -26,6 +26,10 @@ from .serializers import (
 )
 
 
+# ═════════════════════════════════════════════════════════════════
+# Survey Responses (read-only + actions)
+# ═════════════════════════════════════════════════════════════════
+
 class SurveyResponseViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = SurveyResponseSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -33,14 +37,34 @@ class SurveyResponseViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["started_at", "submitted_at"]
 
     def get_queryset(self):
-        u = self.request.user
+        """
+        Optimized queryset.
+
+        Query cost (prod, JWT):
+          - list:       COUNT + 1 (main with JOINs) + 1 (answers) + 1 (files)
+          - retrieve:   same as list
+          - my_draft:   2 (no COUNT)
+
+        `select_related`:
+          - survey:  needed for `survey.response_mode` (anonymity check)
+          - user:    embedded via UserSummarySerializer
+          - assignment: cheap; used only as UUID in response
+        `prefetch_related`:
+          - answers__files: batches answers + files into 2 queries total
+        """
         qs = (
-            SurveyResponse.objects.select_related("survey", "user", "assignment")
+            SurveyResponse.objects
+            .select_related("survey", "user", "assignment")
             .prefetch_related("answers__files")
+            .order_by("-started_at")
         )
+
+        u = self.request.user
         if u.is_superuser:
             return qs
         return qs.filter(user=u)
+
+    # ── Save draft ────────────────────────────────────────────
 
     @decorators.action(
         detail=False,
@@ -81,9 +105,20 @@ class SurveyResponseViewSet(viewsets.ReadOnlyModelViewSet):
         except SubmissionError as e:
             return Response({"detail": str(e)}, status=400)
 
-        return Response(
-            SurveyResponseSerializer(response, context={"request": request}).data
+        # Re-fetch with the optimized queryset so the response payload
+        # has all related data prefetched (avoids 3+ lazy queries when
+        # the serializer walks `answers` and `files`).
+        fresh = (
+            SurveyResponse.objects
+            .select_related("survey", "user", "assignment")
+            .prefetch_related("answers__files")
+            .get(pk=response.pk)
         )
+        return Response(
+            SurveyResponseSerializer(fresh, context={"request": request}).data
+        )
+
+    # ── Submit ────────────────────────────────────────────────
 
     @decorators.action(detail=True, methods=["post"])
     def submit(self, request, pk=None):
@@ -94,9 +129,20 @@ class SurveyResponseViewSet(viewsets.ReadOnlyModelViewSet):
             submit_response(user=request.user, response=response)
         except SubmissionError as e:
             return Response({"detail": str(e)}, status=400)
-        return Response(
-            SurveyResponseSerializer(response, context={"request": request}).data
+
+        # Same trick as save-draft: refetch with prefetches so serializing
+        # the response after submit doesn't trigger lazy loads.
+        fresh = (
+            SurveyResponse.objects
+            .select_related("survey", "user", "assignment")
+            .prefetch_related("answers__files")
+            .get(pk=response.pk)
         )
+        return Response(
+            SurveyResponseSerializer(fresh, context={"request": request}).data
+        )
+
+    # ── Current user's draft for a survey ─────────────────────
 
     @decorators.action(
         detail=False, methods=["get"],
@@ -104,12 +150,14 @@ class SurveyResponseViewSet(viewsets.ReadOnlyModelViewSet):
     )
     def my_draft(self, request, survey_id=None):
         response = (
-            SurveyResponse.objects.filter(
+            SurveyResponse.objects
+            .select_related("survey", "user", "assignment")
+            .prefetch_related("answers__files")
+            .filter(
                 user=request.user,
                 survey_id=survey_id,
                 status=SurveyResponse.Status.DRAFT,
             )
-            .prefetch_related("answers__files")
             .first()
         )
         if not response:
@@ -119,6 +167,10 @@ class SurveyResponseViewSet(viewsets.ReadOnlyModelViewSet):
         )
 
 
+# ═════════════════════════════════════════════════════════════════
+# Answers (read-only)
+# ═════════════════════════════════════════════════════════════════
+
 class AnswerViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AnswerSerializer
     filter_backends = [DjangoFilterBackend]
@@ -127,13 +179,19 @@ class AnswerViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         u = self.request.user
         qs = (
-            Answer.objects.select_related("response", "question")
+            Answer.objects
+            .select_related("response", "question")
             .prefetch_related("files")
+            .order_by("-created_at")
         )
         if u.is_superuser:
             return qs
         return qs.filter(response__user=u)
 
+
+# ═════════════════════════════════════════════════════════════════
+# File upload
+# ═════════════════════════════════════════════════════════════════
 
 class AnswerFileUploadView(APIView):
     """
