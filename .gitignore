@@ -1,0 +1,288 @@
+# ═══════════════════════════════════════════════════════════
+# ENV / SECRETS
+# ═══════════════════════════════════════════════════════════
+# Secrets & env files — هرگز commit نشن
+.env
+.env.*
+!.env.example
+
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Certificates & keys
+*.key
+*.pem
+*.crt
+*.pfx
+*.p12
+*.der
+*.csr
+
+# Django secret files
+*secret*.json
+*credentials*.json
+*service-account*.json
+
+# Sentry / monitoring
+.sentryclirc
+
+
+# ═══════════════════════════════════════════════════════════
+# PYTHON / DJANGO — BACKEND
+# ═══════════════════════════════════════════════════════════
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# Distribution / packaging (root-only to avoid ignoring source folders)
+/build/
+/dist/
+/develop-eggs/
+/downloads/
+/eggs/
+/.eggs/
+/sdist/
+/wheels/
+/parts/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtualenvs
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+__pypackages__/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Type checkers / linters
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+.pyre/
+.pytype/
+.pylint.d/
+.bandit/
+
+# Misc Python
+.python-version
+*.pot
+*.mo
+local_settings.py
+instance/
+.scrapy/
+
+
+# ═══════════════════════════════════════════════════════════
+# DJANGO SPECIFIC
+# ═══════════════════════════════════════════════════════════
+# SQLite (dev fallback)
+db.sqlite3
+db.sqlite3-journal
+*.sqlite3
+*.sqlite3-journal
+
+# User-uploaded files
+backend/media/
+/media/
+mediafiles/
+
+# Collected static files
+backend/staticfiles/
+/staticfiles/
+/static/
+
+# Django logs
+*.log
+logs/
+*.log.*
+
+# Celery (if added later)
+celerybeat-schedule
+celerybeat-schedule.*
+celerybeat.pid
+
+# Migrations are tracked — DO NOT ignore. Keep this as a note:
+# !backend/apps/*/migrations/*.py
+
+
+# ═══════════════════════════════════════════════════════════
+# NODE / NEXT.JS — FRONTEND
+# ═══════════════════════════════════════════════════════════
+node_modules/
+frontend/node_modules/
+.pnp
+.pnp.js
+
+# Next.js build output
+.next/
+frontend/.next/
+frontend/out/
+/frontend/out/
+
+# Next.js caches
+.turbo/
+frontend/.turbo/
+.swc/
+
+# Vercel
+.vercel/
+
+# Storybook
+storybook-static/
+
+# Package managers
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Yarn / pnpm
+.yarn/cache
+.yarn/install-state.gz
+.pnp.*
+.pnp.js
+
+# TypeScript
+*.tsbuildinfo
+frontend/next-env.d.ts
+frontend/.tsbuildinfo
+
+# ESLint / Prettier caches
+.eslintcache
+.prettiercache
+stylelintcache
+
+
+# ═══════════════════════════════════════════════════════════
+# DOCKER
+# ═══════════════════════════════════════════════════════════
+docker-compose.override.yml
+docker-compose.*.override.yml
+
+# Local volumes (if bind-mounted)
+postgres_data/
+pgdata/
+redis_data/
+redis/
+*.rdb
+
+
+# ═══════════════════════════════════════════════════════════
+# IDE / EDITORS
+# ═══════════════════════════════════════════════════════════
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+!.vscode/launch.json.example
+.idea/
+*.iml
+*.ipr
+*.iws
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+.history/
+
+
+# ═══════════════════════════════════════════════════════════
+# OS
+# ═══════════════════════════════════════════════════════════
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+*~
+
+
+# ═══════════════════════════════════════════════════════════
+# TEST / TEMP / CACHE
+# ═══════════════════════════════════════════════════════════
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+tmp/
+temp/
+.cache/
+.cache-loader/
+.parcel-cache/
+
+
+# ═══════════════════════════════════════════════════════════
+# JUPYTER / NOTEBOOKS
+# ═══════════════════════════════════════════════════════════
+.ipynb_checkpoints/
+
+
+# ═══════════════════════════════════════════════════════════
+# AI TOOLS — PERSONAL CONFIGS (should NOT be committed)
+# ═══════════════════════════════════════════════════════════
+# Keep AGENTS.md and CLAUDE.md tracked (team-shared instruction files).
+# Only ignore personal/local overrides.
+.qodo/
+.cursor/
+.cursorrules.local
+.aider*
+.claude/settings.local.json
+.windsurf/
+.continue/
+.idea/copilot/
+.github/copilot/**
+!/.github/copilot-instructions.md
+
+
+# ═══════════════════════════════════════════════════════════
+# MISC
+# ═══════════════════════════════════════════════════════════
+*.pid
+*.seed
+*.pid.lock
+.eslintignore.bak
+.yarnrc.yml.bak
+
+
+# ═══════════════════════════════════════════════════════════
+# PROJECT-SPECIFIC
+# ═══════════════════════════════════════════════════════════
+# Keep these tracked — they are project resources:
+# !frontend/shared/lib/       ← BUG FIX: was being ignored before
+# !backend/apps/*/migrations/*.py
+# !*.example
+
+# Local dev overrides (never commit)
+*.local
+*.local.*
+local_*
+!local_settings.py.example
+
+# Generated schemas (optional — uncomment if you don't want them)
+# /openapi-schema.yml
+# /openapi-schema.json
