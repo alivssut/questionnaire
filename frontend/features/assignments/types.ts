@@ -20,4 +20,5 @@ export interface Assignment {
   completed_at: string | null;
   allow_resume: boolean;
   is_past_due: boolean;
+  response_id: string | null; 
 }

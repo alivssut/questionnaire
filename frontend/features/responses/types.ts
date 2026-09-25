@@ -26,6 +26,7 @@ export interface AnswerRecord {
 export interface SurveyResponse {
   id: string;
   survey: string;
+  survey_title?: string; 
   user: ResponseUser | null;
   assignment: string | null;
   status: ResponseStatus;

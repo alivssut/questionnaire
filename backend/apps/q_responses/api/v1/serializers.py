@@ -58,15 +58,21 @@ class SurveyResponseSerializer(serializers.ModelSerializer):
     to avoid one `get_all_permissions()` query per embedded user — the
     single biggest source of N+1 in this endpoint.
 
+    `survey_title` is included so list views can render the survey name
+    without an extra lookup. Safe because the queryset already does
+    `select_related("survey")` — no N+1.
+
     For anonymous surveys, `user` is always null.
     """
     answers = AnswerSerializer(many=True, read_only=True)
     user = serializers.SerializerMethodField()
+    survey_title = serializers.CharField(source="survey.title", read_only=True)
 
     class Meta:
         model = SurveyResponse
         fields = [
-            "id", "survey", "user", "assignment", "status",
+            "id", "survey", "survey_title",
+            "user", "assignment", "status",
             "started_at", "submitted_at", "completion_time",
             "answers", "created_at", "updated_at",
         ]

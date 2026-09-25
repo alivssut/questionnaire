@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { apiClient, getErrorMessage } from '@/shared/lib/api/client';
 import { endpoints } from '@/shared/lib/api/endpoints';
 import type { Paginated } from '@/shared/types';
+import { useUserRole } from '@/shared/hooks/use-user-role';
 
 import { Button } from '@/shared/components/ui/button';
 import { Input } from '@/shared/components/ui/input';
@@ -21,6 +22,10 @@ import { downloadCSV } from '@/shared/lib/export/csv';
 import { downloadExcel } from '@/shared/lib/export/excel';
 import { toFa, formatDateTime, initials } from '@/shared/lib/utils';
 
+// ═════════════════════════════════════════════════════════════════
+// Types
+// ═════════════════════════════════════════════════════════════════
+
 interface ResponseRow {
   id: string;
   survey: string;
@@ -32,7 +37,15 @@ interface ResponseRow {
   completion_time: string | null;
 }
 
+// ═════════════════════════════════════════════════════════════════
+// Content
+// ═════════════════════════════════════════════════════════════════
+
 function ResponsesContent() {
+  const role = useUserRole();
+  // Regular users only see their own responses.
+  const isRegularUser = role === 'user';
+
   const [items, setItems] = useState<ResponseRow[] | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -41,25 +54,31 @@ function ResponsesContent() {
   const [debounced, setDebounced] = useState('');
   const [exporting, setExporting] = useState(false);
 
+  // Debounce search (300 ms).
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search), 300);
     return () => clearTimeout(t);
   }, [search]);
 
+  // Reset to page 1 whenever the search changes.
   useEffect(() => {
     setPage(1);
   }, [debounced]);
 
+  // ── Load ────────────────────────────────────────────────────
   const load = useCallback(async () => {
     try {
-      const { data } = await apiClient.get<Paginated<ResponseRow>>(endpoints.responses, {
-        params: {
-          page,
-          page_size: pageSize,
-          search: debounced || undefined,
-          ordering: '-started_at',
+      const { data } = await apiClient.get<Paginated<ResponseRow>>(
+        endpoints.responses,
+        {
+          params: {
+            page,
+            page_size: pageSize,
+            search: debounced || undefined,
+            ordering: '-started_at',
+          },
         },
-      });
+      );
       setItems(data.results);
       setTotal(data.count);
     } catch {
@@ -72,11 +91,18 @@ function ResponsesContent() {
     void load();
   }, [load]);
 
-  // Fetch all for export
+  // ── Export (admin/creator only) ─────────────────────────────
   const fetchAll = useCallback(async (): Promise<ResponseRow[]> => {
-    const { data } = await apiClient.get<Paginated<ResponseRow>>(endpoints.responses, {
-      params: { page_size: 1000, search: debounced || undefined, ordering: '-started_at' },
-    });
+    const { data } = await apiClient.get<Paginated<ResponseRow>>(
+      endpoints.responses,
+      {
+        params: {
+          page_size: 1000,
+          search: debounced || undefined,
+          ordering: '-started_at',
+        },
+      },
+    );
     return data.results;
   }, [debounced]);
 
@@ -123,35 +149,52 @@ function ResponsesContent() {
     }
   };
 
+  // ═══════════════════════════════════════════════════════════
+  // Render
+  // ═══════════════════════════════════════════════════════════
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
+      {/* ── Header ───────────────────────────────────────────── */}
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-bold">پاسخ‌ها</h1>
+          <h1 className="text-2xl font-bold">
+            {isRegularUser ? 'پاسخ‌های من' : 'پاسخ‌ها'}
+          </h1>
           <p className="text-muted-foreground text-sm mt-1.5">
-            {toFa(total)} پاسخ دریافت شده
+            {isRegularUser
+              ? total > 0
+                ? `${toFa(total)} پاسخ ثبت کرده‌اید`
+                : 'هنوز به پرسشنامه‌ای پاسخ نداده‌اید'
+              : `${toFa(total)} پاسخ دریافت شده`}
           </p>
         </div>
-        <ExportMenu
-          onExportCSV={handleCSV}
-          onExportExcel={handleExcel}
-          disabled={exporting || total === 0}
-        />
+
+        {!isRegularUser && (
+          <ExportMenu
+            onExportCSV={handleCSV}
+            onExportExcel={handleExcel}
+            disabled={exporting || total === 0}
+          />
+        )}
       </div>
 
+      {/* ── Toolbar ──────────────────────────────────────────── */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-sm min-w-[200px]">
-          <Search
-            size={14}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="جستجوی پاسخ‌دهنده..."
-            className="pr-9"
-          />
-        </div>
+        {!isRegularUser && (
+          <div className="relative flex-1 max-w-sm min-w-[200px]">
+            <Search
+              size={14}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+            />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="جستجوی پاسخ‌دهنده..."
+              className="pr-9"
+            />
+          </div>
+        )}
+
         <select
           value={pageSize}
           onChange={(e) => {
@@ -161,15 +204,30 @@ function ResponsesContent() {
           className="h-10 px-3 text-sm bg-card border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-ring"
         >
           {PAGE_SIZE_OPTIONS.map((s) => (
-            <option key={s} value={s}>{toFa(s)} در صفحه</option>
+            <option key={s} value={s}>
+              {toFa(s)} در صفحه
+            </option>
           ))}
         </select>
       </div>
 
+      {/* ── Content ──────────────────────────────────────────── */}
       {!items ? (
         <Skeleton className="h-64 w-full rounded-2xl" />
       ) : items.length === 0 ? (
-        <EmptyState icon={Download} title="پاسخی یافت نشد" />
+        <EmptyState
+          icon={Download}
+          title={
+            isRegularUser
+              ? 'هنوز پاسخی ثبت نکرده‌اید'
+              : 'پاسخی یافت نشد'
+          }
+          description={
+            isRegularUser
+              ? 'وقتی به یک پرسشنامه پاسخ دهید، اینجا نمایش داده می‌شود.'
+              : undefined
+          }
+        />
       ) : (
         <>
           <div className="bg-card rounded-2xl border border-border overflow-hidden">
@@ -177,10 +235,13 @@ function ResponsesContent() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/50">
+                    {/* Respondent column — admin/creator only */}
+                    {!isRegularUser && (
+                      <th className="text-right px-5 py-3.5 text-xs font-semibold text-muted-foreground">
+                        پاسخ‌دهنده
+                      </th>
+                    )}
                     <th className="text-right px-5 py-3.5 text-xs font-semibold text-muted-foreground">
-                      پاسخ‌دهنده
-                    </th>
-                    <th className="text-right px-4 py-3.5 text-xs font-semibold text-muted-foreground hidden md:table-cell">
                       پرسشنامه
                     </th>
                     <th className="text-right px-4 py-3.5 text-xs font-semibold text-muted-foreground hidden lg:table-cell">
@@ -197,38 +258,55 @@ function ResponsesContent() {
                 </thead>
                 <tbody className="divide-y divide-border">
                   {items.map((r) => (
-                    <tr key={r.id} className="hover:bg-accent/50 transition-colors">
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-violet-500/10 flex items-center justify-center flex-shrink-0">
-                            <span className="text-[10px] font-bold text-violet-600">
-                              {initials(r.user?.full_name ?? 'ناشناس')}
-                            </span>
+                    <tr
+                      key={r.id}
+                      className="hover:bg-accent/50 transition-colors"
+                    >
+                      {/* Respondent column — admin/creator only */}
+                      {!isRegularUser && (
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-violet-500/10 flex items-center justify-center flex-shrink-0">
+                              <span className="text-[10px] font-bold text-violet-600">
+                                {initials(r.user?.full_name ?? 'ناشناس')}
+                              </span>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-medium truncate">
+                                {r.user?.full_name ?? 'ناشناس'}
+                              </p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {r.user?.email ?? '—'}
+                              </p>
+                            </div>
                           </div>
-                          <div className="min-w-0">
-                            <p className="font-medium truncate">
-                              {r.user?.full_name ?? 'ناشناس'}
-                            </p>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {r.user?.email ?? '—'}
-                            </p>
-                          </div>
-                        </div>
+                        </td>
+                      )}
+
+                      <td className="px-5 py-4 text-muted-foreground max-w-xs">
+                        <p className="truncate">
+                          {r.survey_title ?? r.survey}
+                        </p>
                       </td>
-                      <td className="px-4 py-4 text-muted-foreground hidden md:table-cell max-w-xs">
-                        <p className="truncate">{r.survey_title ?? r.survey}</p>
-                      </td>
+
                       <td className="px-4 py-4 text-xs text-muted-foreground hidden lg:table-cell">
                         {formatDateTime(r.started_at)}
                       </td>
+
                       <td className="px-4 py-4 text-xs text-muted-foreground hidden lg:table-cell">
                         {formatDateTime(r.submitted_at)}
                       </td>
+
                       <td className="px-4 py-4">
-                        <Badge variant={r.status === 'SUBMITTED' ? 'success' : 'muted'}>
+                        <Badge
+                          variant={
+                            r.status === 'SUBMITTED' ? 'success' : 'muted'
+                          }
+                        >
                           {r.status === 'SUBMITTED' ? 'ارسال‌شده' : 'پیش‌نویس'}
                         </Badge>
                       </td>
+
                       <td className="px-4 py-4 text-left">
                         <Link
                           href={`/responses/${r.id}`}
@@ -245,16 +323,25 @@ function ResponsesContent() {
             </div>
           </div>
 
-          <Pagination page={page} pageSize={pageSize} total={total} onChange={setPage} />
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            onChange={setPage}
+          />
         </>
       )}
     </div>
   );
 }
 
+// ═════════════════════════════════════════════════════════════════
+// Page wrapper
+// ═════════════════════════════════════════════════════════════════
+
 export default function ResponsesPage() {
   return (
-    <RoleGuard roles={['admin', 'creator']}>
+    <RoleGuard roles={['admin', 'creator', 'user']}>
       <ResponsesContent />
     </RoleGuard>
   );

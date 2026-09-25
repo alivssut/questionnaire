@@ -81,15 +81,18 @@ const sections: NavSection[] = [
         icon: BookOpen,
         roles: ['admin', 'creator', 'user'],
         badge: 'assignments',
-        // Admins only see it when they actually have something to answer.
-        // Creators and regular users always see it (it's part of their
-        // primary workflow). The predicate is evaluated only when set;
-        // the `alwaysShowMyQuestionnaires` short-circuit below handles
-        // the other roles.
         visible: ({ myAssignmentsCount }) => {
           if (myAssignmentsCount === null) return false;
           return myAssignmentsCount > 0;
         },
+      },
+      {
+        // Regular users see their own responses only — same page, but
+        // a simpler UI (no "respondent" column, no export menu).
+        label: 'پاسخ‌های من',
+        href: '/responses',
+        icon: CheckSquare,
+        roles: ['user'],
       },
     ],
     roles: ['admin', 'creator', 'user'],

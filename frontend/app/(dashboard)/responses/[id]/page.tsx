@@ -330,7 +330,7 @@ function formatDuration(duration: string): string {
 
 export default function ResponseDetailPage() {
   return (
-    <RoleGuard roles={['admin', 'creator']}>
+    <RoleGuard roles={['admin', 'creator', 'user']}>
       <ResponseDetailContent />
     </RoleGuard>
   );

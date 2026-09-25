@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -41,26 +42,58 @@ class SurveyAssignmentViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated()]
         return [IsSuperUser()]
 
-    def get_queryset(self):
-        _mark_overdue_throttled()
+    # ══════════════════════════════════════════════════════════════
+    # Base queryset (shared by `get_queryset` and `mine`)
+    # ══════════════════════════════════════════════════════════════
+    #
+    # IMPORTANT: `mine` used to build its own queryset without the
+    # `response_id` annotation, so the "مشاهده پاسخ من" button never
+    # appeared on completed assignments. Extracting this helper keeps
+    # the annotation in ONE place — anything that lists assignments
+    # must go through here.
+    #
+    # The correlated Subquery looks up the (survey, user) SUBMITTED
+    # SurveyResponse, which is guaranteed to be at most one because of
+    # the unique constraint on (survey, user). `[:1]` therefore never
+    # silently truncates.
+    # ══════════════════════════════════════════════════════════════
 
-        u = self.request.user
+    def _annotated_queryset(self):
+        from apps.q_responses.models import SurveyResponse
 
-        # select_related for the FKs we actually serialize.
-        #   - survey: needed for `survey_title` (source="survey.title")
-        #   - user: embedded via UserSummarySerializer
-        #   - assigned_by: cheap to select, useful if it ever gets embedded
-        # UserSummarySerializer doesn't touch permissions/groups, so no
-        # prefetch is needed for the user side.
-        qs = (
+        response_id_sq = (
+            SurveyResponse.objects
+            .filter(
+                survey=OuterRef("survey_id"),
+                user=OuterRef("user_id"),
+                status=SurveyResponse.Status.SUBMITTED,
+            )
+            .values("id")[:1]
+        )
+
+        return (
             SurveyAssignment.objects
             .select_related("survey", "user", "assigned_by")
-            .order_by("-assigned_at")
+            .annotate(response_id=Subquery(response_id_sq))
         )
+
+    # ══════════════════════════════════════════════════════════════
+    # Queryset
+    # ══════════════════════════════════════════════════════════════
+
+    def get_queryset(self):
+        _mark_overdue_throttled()
+        u = self.request.user
+
+        qs = self._annotated_queryset().order_by("-assigned_at")
 
         if u.is_superuser:
             return qs
         return qs.filter(user=u)
+
+    # ══════════════════════════════════════════════════════════════
+    # Create (single assign)
+    # ══════════════════════════════════════════════════════════════
 
     def create(self, request, *args, **kwargs):
         s = self.get_serializer(data=request.data)
@@ -89,12 +122,26 @@ class SurveyAssignmentViewSet(viewsets.ModelViewSet):
                 {"detail": "User is already assigned to this survey."},
                 status=status.HTTP_409_CONFLICT,
             )
+
+        # Re-fetch through the annotated queryset so the response
+        # carries `response_id` (null for a fresh assignment, but the
+        # field is always present — consistent shape for the client).
+        fresh = self._annotated_queryset().get(pk=assignment.pk)
         return Response(
-            SurveyAssignmentSerializer(assignment).data,
+            SurveyAssignmentSerializer(fresh).data,
             status=status.HTTP_201_CREATED,
         )
 
-    @decorators.action(detail=False, methods=["post"], url_path="bulk", url_name="bulk",)
+    # ══════════════════════════════════════════════════════════════
+    # Bulk assign
+    # ══════════════════════════════════════════════════════════════
+
+    @decorators.action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk",
+        url_name="bulk",
+    )
     def bulk_create(self, request):
         s = BulkAssignSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -125,6 +172,10 @@ class SurveyAssignmentViewSet(viewsets.ModelViewSet):
             status=201,
         )
 
+    # ══════════════════════════════════════════════════════════════
+    # Start (PENDING → IN_PROGRESS)
+    # ══════════════════════════════════════════════════════════════
+
     @decorators.action(detail=True, methods=["post"])
     def start(self, request, pk=None):
         a = self.get_object()
@@ -135,21 +186,26 @@ class SurveyAssignmentViewSet(viewsets.ModelViewSet):
             a.status = SurveyAssignment.Status.IN_PROGRESS
             a.start_date = timezone.now()
             a.save(update_fields=["status", "start_date", "updated_at"])
-        return Response(SurveyAssignmentSerializer(a).data)
+
+        # Re-fetch through the annotated queryset for a consistent shape.
+        fresh = self._annotated_queryset().get(pk=a.pk)
+        return Response(SurveyAssignmentSerializer(fresh).data)
+
+    # ══════════════════════════════════════════════════════════════
+    # Mine — current user's assignments only
+    # ══════════════════════════════════════════════════════════════
 
     @decorators.action(detail=False, methods=["get"], url_path="mine")
     def mine(self, request):
         """
         Return ONLY the current user's assignments.
 
-        Important: even superusers see only their own assignments here
-        (this endpoint is meant to drive the "my questionnaires" view
-        for the person who is logged in). For admin-wide listing, use
-        the regular `list` action.
+        Uses `_annotated_queryset()` so `response_id` is populated for
+        completed assignments. Even superusers get scoped to their own
+        rows here — the admin-wide listing lives at the `list` action.
         """
         qs = (
-            SurveyAssignment.objects
-            .select_related("survey", "user", "assigned_by")
+            self._annotated_queryset()
             .filter(user=request.user)
             .order_by("-assigned_at")
         )

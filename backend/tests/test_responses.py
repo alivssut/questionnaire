@@ -17,9 +17,10 @@ from tests.factories import (
 )
 
 
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════
 # Draft + submit
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════
+
 @pytest.mark.django_db
 def test_save_draft_and_submit(user_client):
     survey = PublicSurveyFactory()
@@ -183,9 +184,10 @@ def test_save_draft_blocked_on_overdue_assignment(user_client):
     assert "deadline" in str(r.data).lower()
 
 
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════
 # Anonymous surveys
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════
+
 @pytest.mark.django_db
 def test_anonymous_survey_hides_user(user_client):
     survey = PublicSurveyFactory(response_mode="ANONYMOUS")
@@ -203,9 +205,10 @@ def test_anonymous_survey_hides_user(user_client):
     assert r.data["user"] is None
 
 
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════
 # Choice / matrix answers
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════
+
 @pytest.mark.django_db
 def test_single_choice_valid_value(user_client):
     survey = PublicSurveyFactory()
@@ -238,9 +241,10 @@ def test_single_choice_invalid_value(user_client):
     assert r.status_code == 400
 
 
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════
 # File upload
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════
+
 @pytest.mark.django_db
 def test_answer_file_upload_requires_survey_id(user_client):
     f = SimpleUploadedFile("hello.txt", b"hello", content_type="text/plain")
@@ -384,9 +388,10 @@ def test_cannot_link_another_users_file(user_client, make_client):
     assert r.status_code == 400
 
 
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════
 # Draft retrieval
-# ---------------------------------------------------------------------------
+# ═════════════════════════════════════════════════════════════════
+
 @pytest.mark.django_db
 def test_my_draft_returns_saved(user_client):
     survey = PublicSurveyFactory()
@@ -413,7 +418,7 @@ def test_my_draft_404_when_none(user_client):
         reverse("v1:responses:responses-my-draft", args=[survey.id]),
     )
     assert r.status_code == 404
-    
+
 
 # ═════════════════════════════════════════════════════════════════
 # Concurrency & edge cases
@@ -515,7 +520,10 @@ def test_submit_after_survey_soft_deleted(user_client):
     survey.soft_delete()
     sub = user_client.post(reverse("v1:responses:responses-submit", args=[rid]))
     assert sub.status_code == 400
-    assert "no longer available" in str(sub.data).lower() or "not open" in str(sub.data).lower()
+    assert (
+        "no longer available" in str(sub.data).lower()
+        or "not open" in str(sub.data).lower()
+    )
 
 
 @pytest.mark.django_db
@@ -570,3 +578,111 @@ def test_draft_only_contains_own_answers_on_retrieve(user_client, make_client):
         reverse("v1:responses:responses-my-draft", args=[survey.id]),
     )
     assert r.status_code == 404
+
+
+# ═════════════════════════════════════════════════════════════════
+# survey_title field — regression tests
+# ═════════════════════════════════════════════════════════════════
+#
+# The list serializer now includes `survey_title` so list views can
+# render the survey name without an extra request. These tests guard
+# against accidental removal of that field.
+# ═════════════════════════════════════════════════════════════════
+
+@pytest.mark.django_db
+def test_response_list_includes_survey_title(admin_client):
+    """The list endpoint must include `survey_title` (not just the UUID)."""
+    survey = PublicSurveyFactory(title="My Test Survey")
+    SurveyResponseFactory(survey=survey, user=admin_client.user)
+
+    r = admin_client.get(reverse("v1:responses:responses-list"))
+    assert r.status_code == 200
+    assert r.data["count"] == 1
+    row = r.data["results"][0]
+    # NOTE: r.data is the decoded response (pre-JSON-encoding), so UUID
+    # fields come back as UUID instances. Normalize both sides to str.
+    assert str(row["survey"]) == str(survey.id)
+    assert row["survey_title"] == "My Test Survey"
+
+
+@pytest.mark.django_db
+def test_response_detail_includes_survey_title(admin_client):
+    """The detail endpoint must include `survey_title` too."""
+    survey = PublicSurveyFactory(title="Detail Survey")
+    resp = SurveyResponseFactory(survey=survey, user=admin_client.user)
+
+    r = admin_client.get(reverse("v1:responses:responses-detail", args=[resp.id]))
+    assert r.status_code == 200
+    assert r.data["survey_title"] == "Detail Survey"
+
+
+@pytest.mark.django_db
+def test_save_draft_response_includes_survey_title(user_client):
+    """save-draft returns the full serialized response, including title."""
+    survey = PublicSurveyFactory(title="Draft Title Test")
+    q = QuestionFactory(survey=survey, order=1)
+
+    r = user_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id),
+         "answers": [{"question": str(q.id), "value": {"text": "x"}}]},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+    assert r.data["survey_title"] == "Draft Title Test"
+
+
+@pytest.mark.django_db
+def test_submit_response_includes_survey_title(user_client):
+    """submit returns the serialized response with survey_title populated."""
+    survey = PublicSurveyFactory(title="Submit Title Test")
+    q = QuestionFactory(survey=survey, order=1, required=True)
+
+    r = user_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id),
+         "answers": [{"question": str(q.id), "value": {"text": "x"}}]},
+        format="json",
+    )
+    rid = r.data["id"]
+
+    sub = user_client.post(reverse("v1:responses:responses-submit", args=[rid]))
+    assert sub.status_code == 200
+    assert sub.data["survey_title"] == "Submit Title Test"
+
+
+@pytest.mark.django_db
+def test_my_draft_includes_survey_title(user_client):
+    """The /my-draft/ endpoint must also include survey_title."""
+    survey = PublicSurveyFactory(title="My Draft Title")
+    q = QuestionFactory(survey=survey, order=1)
+
+    user_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id),
+         "answers": [{"question": str(q.id), "value": {"text": "draft"}}]},
+        format="json",
+    )
+
+    r = user_client.get(
+        reverse("v1:responses:responses-my-draft", args=[survey.id]),
+    )
+    assert r.status_code == 200
+    assert r.data["survey_title"] == "My Draft Title"
+
+
+@pytest.mark.django_db
+def test_anonymous_response_still_has_survey_title(user_client):
+    """Anonymous surveys hide the user but still show the survey title."""
+    survey = PublicSurveyFactory(title="Anon Survey", response_mode="ANONYMOUS")
+    q = QuestionFactory(survey=survey, order=1, required=True)
+
+    r = user_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id),
+         "answers": [{"question": str(q.id), "value": {"text": "x"}}]},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+    assert r.data["user"] is None
+    assert r.data["survey_title"] == "Anon Survey"
