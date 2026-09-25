@@ -5,7 +5,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.q_responses.models import AnswerFile
+from apps.q_responses.models import AnswerFile, SurveyResponse
 from tests.factories import (
     AssignmentFactory,
     FileUploadQuestionFactory,
@@ -409,6 +409,163 @@ def test_my_draft_returns_saved(user_client):
 @pytest.mark.django_db
 def test_my_draft_404_when_none(user_client):
     survey = PublicSurveyFactory()
+    r = user_client.get(
+        reverse("v1:responses:responses-my-draft", args=[survey.id]),
+    )
+    assert r.status_code == 404
+    
+
+# ═════════════════════════════════════════════════════════════════
+# Concurrency & edge cases
+# ═════════════════════════════════════════════════════════════════
+
+@pytest.mark.django_db
+def test_repeated_save_draft_is_idempotent(user_client):
+    survey = PublicSurveyFactory()
+    q = QuestionFactory(survey=survey, order=1)
+
+    payload = {
+        "survey": str(survey.id),
+        "answers": [{"question": str(q.id), "value": {"text": "x"}}],
+    }
+    r1 = user_client.post(
+        reverse("v1:responses:responses-save-draft"), payload, format="json",
+    )
+    r2 = user_client.post(
+        reverse("v1:responses:responses-save-draft"), payload, format="json",
+    )
+    assert r1.data["id"] == r2.data["id"]  # same response
+    assert (
+        SurveyResponse.objects.filter(survey=survey, user=user_client.user).count()
+        == 1
+    )
+
+
+@pytest.mark.django_db
+def test_save_draft_then_update_value(user_client):
+    survey = PublicSurveyFactory()
+    q = QuestionFactory(survey=survey, order=1, required=True)
+
+    r1 = user_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id),
+         "answers": [{"question": str(q.id), "value": {"text": "first"}}]},
+        format="json",
+    )
+    rid = r1.data["id"]
+
+    r2 = user_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id),
+         "answers": [{"question": str(q.id), "value": {"text": "second"}}]},
+        format="json",
+    )
+    assert r2.status_code == 200
+
+    from apps.q_responses.models import Answer
+    a = Answer.objects.get(response_id=rid, question=q)
+    assert a.value == {"text": "second"}
+
+
+@pytest.mark.django_db
+def test_unicode_answer_text(user_client):
+    survey = PublicSurveyFactory()
+    q = QuestionFactory(survey=survey, order=1, required=True)
+
+    r = user_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id),
+         "answers": [{"question": str(q.id),
+                      "value": {"text": "سلام دنیا 😀 你好"}}]},
+        format="json",
+    )
+    assert r.status_code == 200, r.data
+
+
+@pytest.mark.django_db
+def test_short_text_required_whitespace_rejected_on_submit(user_client):
+    """On submit, whitespace-only text must NOT count as filled."""
+    survey = PublicSurveyFactory()
+    q = QuestionFactory(survey=survey, order=1, required=True)
+
+    r = user_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id),
+         "answers": [{"question": str(q.id), "value": {"text": "\t\n  "}}]},
+        format="json",
+    )
+    rid = r.data["id"]
+    sub = user_client.post(reverse("v1:responses:responses-submit", args=[rid]))
+    assert sub.status_code == 400
+
+
+@pytest.mark.django_db
+def test_submit_after_survey_soft_deleted(user_client):
+    survey = PublicSurveyFactory()
+    q = QuestionFactory(survey=survey, order=1, required=True)
+
+    r = user_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id),
+         "answers": [{"question": str(q.id), "value": {"text": "x"}}]},
+        format="json",
+    )
+    rid = r.data["id"]
+
+    survey.soft_delete()
+    sub = user_client.post(reverse("v1:responses:responses-submit", args=[rid]))
+    assert sub.status_code == 400
+    assert "no longer available" in str(sub.data).lower() or "not open" in str(sub.data).lower()
+
+
+@pytest.mark.django_db
+def test_multiple_choice_with_one_invalid_value_rejected(user_client):
+    survey = PublicSurveyFactory()
+    from tests.factories import SingleChoiceQuestionFactory
+    q = SingleChoiceQuestionFactory(survey=survey)
+    q.type = "MULTIPLE_CHOICE"
+    q.save()
+
+    r = user_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id),
+         "answers": [{"question": str(q.id),
+                      "value": {"values": ["yes", "invalid"]}}]},
+        format="json",
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.django_db
+def test_file_upload_with_zero_ids_is_ok_for_optional(user_client):
+    survey = PublicSurveyFactory()
+    from tests.factories import FileUploadQuestionFactory
+    FileUploadQuestionFactory(survey=survey, required=False)
+
+    r = user_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id), "answers": []},
+        format="json",
+    )
+    assert r.status_code == 200
+
+
+@pytest.mark.django_db
+def test_draft_only_contains_own_answers_on_retrieve(user_client, make_client):
+    """A user must not see another user's draft via /my-draft/."""
+    from tests.factories import UserFactory
+    survey = PublicSurveyFactory()
+    q = QuestionFactory(survey=survey, order=1)
+
+    other = UserFactory()
+    other_client = make_client(other)
+    other_client.post(
+        reverse("v1:responses:responses-save-draft"),
+        {"survey": str(survey.id),
+         "answers": [{"question": str(q.id), "value": {"text": "secret"}}]},
+        format="json",
+    )
+
     r = user_client.get(
         reverse("v1:responses:responses-my-draft", args=[survey.id]),
     )

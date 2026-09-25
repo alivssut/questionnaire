@@ -142,7 +142,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # --------------------------------------------------------------------------- #
 # If False, /auth/register/ returns 403 and users can only be created by
 # a superuser (via /users/ or the admin panel).
-ALLOW_PUBLIC_REGISTRATION = env("ALLOW_PUBLIC_REGISTRATION", False, bool)
+ALLOW_PUBLIC_REGISTRATION = env("ALLOW_PUBLIC_REGISTRATION", True, bool)
 # If False, email verification endpoints are disabled entirely.
 EMAIL_VERIFICATION_ENABLED = env("EMAIL_VERIFICATION_ENABLED", True, bool)
 # If True, a user whose is_verified=False cannot log in (or refresh tokens).

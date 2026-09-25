@@ -337,10 +337,21 @@ class QuestionViewSet(viewsets.ModelViewSet):
         # Lock the survey row to serialize concurrent creates.
         Survey.objects.select_for_update().get(pk=survey.pk)
 
-        # Only auto-compute order when `order` wasn't supplied at all.
-        # (`is None` instead of `not requested_order` → respects order=0.)
-        requested_order = serializer.validated_data.get("order")
-        if requested_order is None:
+        # ── Auto-order ────────────────────────────────────────────
+        #
+        # IMPORTANT: check `initial_data` (raw payload), NOT `validated_data`.
+        # DRF reads the model field's `default=0` and injects it into
+        # `validated_data` even when the client didn't send an `order`.
+        # That made `validated_data.get("order")` return 0 instead of None,
+        # so auto-computation was never triggered and every question ended
+        # up with order=0 (constraint violation).
+        #
+        # When the client explicitly sends `order` (including 0), we respect
+        # it. Otherwise we compute `max(order) + 1`.
+        # ──────────────────────────────────────────────────────────
+        if "order" in serializer.initial_data:
+            requested_order = serializer.validated_data.get("order")
+        else:
             last = (
                 Question.objects
                 .filter(survey=survey)

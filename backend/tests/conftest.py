@@ -4,13 +4,21 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 
+# ═════════════════════════════════════════════════════════════════
+# Cache
+# ═════════════════════════════════════════════════════════════════
+
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    """Throttle counters are cached — reset between tests."""
+    """Throttle counters + analytics cache — reset between tests."""
     cache.clear()
     yield
     cache.clear()
 
+
+# ═════════════════════════════════════════════════════════════════
+# Auth clients
+# ═════════════════════════════════════════════════════════════════
 
 @pytest.fixture
 def api_client():
@@ -49,3 +57,21 @@ def make_client():
     def _make(user):
         return _auth(APIClient(), user)
     return _make
+
+
+# ═════════════════════════════════════════════════════════════════
+# Speed helpers
+# ═════════════════════════════════════════════════════════════════
+
+@pytest.fixture
+def no_throttle(settings):
+    """Disable throttling for tests that make many auth calls."""
+    settings.REST_FRAMEWORK = {
+        **settings.REST_FRAMEWORK,
+        "DEFAULT_THROTTLE_RATES": {
+            "anon": "10000/hour",
+            "user": "10000/hour",
+            "login": "10000/hour",
+        },
+    }
+    yield

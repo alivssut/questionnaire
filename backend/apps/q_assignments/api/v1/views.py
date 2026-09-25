@@ -94,7 +94,7 @@ class SurveyAssignmentViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    @decorators.action(detail=False, methods=["post"], url_path="bulk")
+    @decorators.action(detail=False, methods=["post"], url_path="bulk", url_name="bulk",)
     def bulk_create(self, request):
         s = BulkAssignSerializer(data=request.data)
         s.is_valid(raise_exception=True)

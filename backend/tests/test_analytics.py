@@ -3,6 +3,9 @@ import uuid
 import pytest
 from django.urls import reverse
 
+from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
+
 from tests.factories import (
     AssignmentFactory,
     PublicSurveyFactory,
@@ -114,3 +117,81 @@ def test_cache_invalidated_after_submit(user_client):
 
     second = c.get(reverse("v1:analytics:survey", args=[s.id]))
     assert second.data["responses_count"] == 1
+
+
+# ═════════════════════════════════════════════════════════════════
+# Cache version-based invalidation (regression test)
+# ═════════════════════════════════════════════════════════════════
+
+@pytest.mark.django_db
+def test_cache_invalidated_for_all_range_variants(user_client):
+    """
+    Regression: invalidating a survey must invalidate every cached
+    (preset, from, to) variant — not just the base key.
+    """
+    from apps.q_analytics.services import invalidate_survey_cache
+    from tests.factories import SuperUserFactory
+
+    s = PublicSurveyFactory()
+    q = QuestionFactory(survey=s, order=1, required=True)
+    AssignmentFactory(survey=s, user=user_client.user)
+
+    admin = SuperUserFactory()
+    c = APIClient()
+    c.credentials(HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(admin).access_token}")
+
+    # Fill cache for several range variants
+    c.get(reverse("v1:analytics:survey", args=[s.id]) + "?preset=7d")
+    c.get(reverse("v1:analytics:survey", args=[s.id]) + "?preset=30d")
+    c.get(reverse("v1:analytics:survey", args=[s.id]))
+
+    # Trigger invalidation
+    invalidate_survey_cache(s.id)
+
+    # Verify version was bumped
+    from django.core.cache import cache
+    version = cache.get(f"analytics:survey:{s.id}:version")
+    assert version is not None and version >= 1
+
+
+@pytest.mark.django_db
+def test_comparison_runs_with_preset(admin_client):
+    """Regression: comparison was always None when only a preset was given."""
+    s = PublicSurveyFactory()
+    r = admin_client.get(
+        reverse("v1:analytics:survey", args=[s.id]) + "?preset=30d",
+    )
+    assert r.status_code == 200
+    assert r.data["comparison"] is not None
+
+
+@pytest.mark.django_db
+def test_comparison_absent_without_range(admin_client):
+    """No range → no comparison (there's nothing to compare against)."""
+    s = PublicSurveyFactory()
+    r = admin_client.get(reverse("v1:analytics:survey", args=[s.id]))
+    assert r.status_code == 200
+    assert r.data["comparison"] is None
+
+
+@pytest.mark.django_db
+def test_timeline_capped_at_max_days(admin_client):
+    """
+    Even for a very old survey, timeline length must be bounded.
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from apps.q_analytics.services import MAX_TIMELINE_DAYS
+
+    s = PublicSurveyFactory()
+    # Fake an old response to trigger the cap
+    from tests.factories import SurveyResponseFactory
+    old = SurveyResponseFactory(
+        survey=s,
+        status="SUBMITTED",
+        submitted_at=timezone.now() - timedelta(days=400),
+    )
+
+    r = admin_client.get(reverse("v1:analytics:survey", args=[s.id]))
+    assert r.status_code == 200
+    assert len(r.data["timeline"]) <= MAX_TIMELINE_DAYS + 1  # +1 for inclusivity

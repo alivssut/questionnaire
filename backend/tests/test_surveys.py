@@ -124,6 +124,15 @@ def test_mine_lists_only_my_surveys(admin_client):
 # ---------------------------------------------------------------------------
 @pytest.mark.django_db
 def test_sequential_creates_get_unique_orders(admin_client):
+    """
+    When creating multiple questions without an explicit `order`, each
+    should auto-increment so that the (survey, order) unique constraint
+    is never violated.
+
+    Regression: DRF was injecting the model's `default=0` into
+    `validated_data`, so `validated_data.get("order")` was always 0
+    (not None) and auto-computation never ran.
+    """
     s = SurveyFactory(created_by=admin_client.user)
     url = reverse("v1:surveys:questions-list")
     orders = set()
@@ -135,6 +144,7 @@ def test_sequential_creates_get_unique_orders(admin_client):
         assert r.status_code == 201, r.data
         orders.add(r.data["order"])
     assert len(orders) == 5
+    assert orders == {1, 2, 3, 4, 5}
 
 
 @pytest.mark.django_db
@@ -376,3 +386,137 @@ def test_soft_delete_hides_survey(admin_client):
     assert s.is_deleted is True
     assert not Survey.objects.filter(id=s.id).exists()
     assert Survey.all_objects.filter(id=s.id).exists()
+    
+
+# ═════════════════════════════════════════════════════════════════
+# Edge cases & regression tests
+# ═════════════════════════════════════════════════════════════════
+
+@pytest.mark.django_db
+def test_question_order_zero_is_respected(admin_client):
+    """
+    Regression: creating a question with order=0 must not overwrite it
+    with the next auto-incremented value.
+    """
+    s = SurveyFactory(created_by=admin_client.user)
+    r = admin_client.post(
+        reverse("v1:surveys:questions-list"),
+        {"survey": str(s.id), "type": "SHORT_TEXT", "title": "Zero", "order": 0},
+        format="json",
+    )
+    assert r.status_code == 201, r.data
+    assert r.data["order"] == 0
+
+
+@pytest.mark.django_db
+def test_survey_title_whitespace_rejected(admin_client):
+    r = admin_client.post(
+        reverse("v1:surveys:surveys-list"),
+        {"title": "   ", "response_mode": "IDENTIFIED"},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.django_db
+def test_survey_title_trimmed_on_create(admin_client):
+    r = admin_client.post(
+        reverse("v1:surveys:surveys-list"),
+        {"title": "  My Survey  ", "response_mode": "IDENTIFIED"},
+    )
+    assert r.status_code == 201
+    assert r.data["title"] == "My Survey"
+
+
+@pytest.mark.django_db
+def test_unicode_survey_title(admin_client):
+    r = admin_client.post(
+        reverse("v1:surveys:surveys-list"),
+        {"title": "پرسشنامه تست 😀", "response_mode": "IDENTIFIED"},
+    )
+    assert r.status_code == 201
+    assert r.data["title"] == "پرسشنامه تست 😀"
+
+
+@pytest.mark.django_db
+def test_publish_already_published_survey(admin_client):
+    from tests.factories import PublishedSurveyFactory
+    s = PublishedSurveyFactory(created_by=admin_client.user)
+    QuestionFactory(survey=s, order=1)
+    r = admin_client.post(reverse("v1:surveys:surveys-publish", args=[s.id]))
+    # Idempotent or 400 — depends on business rule; assert no crash
+    assert r.status_code in (200, 400)
+
+
+@pytest.mark.django_db
+def test_archive_closed_survey(admin_client):
+    from tests.factories import PublishedSurveyFactory
+    s = PublishedSurveyFactory(created_by=admin_client.user, status="CLOSED")
+    r = admin_client.post(reverse("v1:surveys:surveys-archive", args=[s.id]))
+    assert r.status_code == 200
+    s.refresh_from_db()
+    assert s.status == "ARCHIVED"
+
+
+@pytest.mark.django_db
+def test_soft_deleted_survey_not_in_list(admin_client):
+    s = SurveyFactory(created_by=admin_client.user)
+    s.soft_delete()
+    r = admin_client.get(reverse("v1:surveys:surveys-list"))
+    assert r.data["count"] == 0
+
+
+@pytest.mark.django_db
+def test_creator_cannot_edit_other_creators_survey(creator_client):
+    """A creator must not be able to PATCH another creator's survey."""
+    from tests.factories import CreatorUserFactory
+    other = CreatorUserFactory()
+    s = SurveyFactory(created_by=other)
+
+    r = creator_client.patch(
+        reverse("v1:surveys:surveys-detail", args=[s.id]),
+        {"title": "Hijacked"},
+        format="json",
+    )
+    assert r.status_code in (403, 404)
+
+
+@pytest.mark.django_db
+def test_reorder_with_duplicate_orders_rejected(admin_client):
+    s = SurveyFactory(created_by=admin_client.user)
+    q1 = QuestionFactory(survey=s, order=1)
+    q2 = QuestionFactory(survey=s, order=2)
+
+    r = admin_client.post(
+        reverse("v1:surveys:questions-reorder"),
+        [
+            {"id": str(q1.id), "order": 1},
+            {"id": str(q2.id), "order": 1},  # duplicate!
+        ],
+        format="json",
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.django_db
+def test_choice_question_accepts_system_list_without_options(admin_client):
+    """A choice question should validate OK with system_list but no options."""
+    from tests.factories import SystemListFactory, ListItemFactory
+
+    sl = SystemListFactory()
+    ListItemFactory(system_list=sl, label="A", value="a")
+    s = SurveyFactory(created_by=admin_client.user)
+
+    r = admin_client.post(
+        reverse("v1:surveys:questions-list"),
+        {
+            "survey": str(s.id),
+            "type": "SINGLE_CHOICE",
+            "title": "Pick",
+            "system_list": str(sl.id),
+        },
+        format="json",
+    )
+    assert r.status_code == 201, r.data
+    # NOTE: r.data holds the decoded response (before JSON encoding), so
+    # `system_list` may be a UUID instance. Normalize before comparing.
+    assert str(r.data["system_list"]) == str(sl.id)

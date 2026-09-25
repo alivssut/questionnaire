@@ -363,3 +363,117 @@ def test_me_returns_effective_permissions_for_creator(creator_client):
     r = creator_client.get(reverse("v1:auth:me"))
     assert r.status_code == 200
     assert "can_create_survey" in r.data["permissions"]
+
+
+# ═════════════════════════════════════════════════════════════════
+# Email verification tokens
+# ═════════════════════════════════════════════════════════════════
+
+@pytest.mark.django_db
+def test_verification_token_ttl_expires(settings):
+    settings.EMAIL_VERIFICATION_ENABLED = True
+    from datetime import timedelta
+    from django.utils import timezone
+    from apps.q_accounts.models import EmailVerificationToken
+
+    user = UserFactory(is_verified=False)
+    token = EmailVerificationToken.issue(user, ttl_hours=1)
+
+    # Force expire
+    token.expires_at = timezone.now() - timedelta(seconds=1)
+    token.save(update_fields=["expires_at"])
+
+    assert token.is_valid() is False
+
+    # Confirm must fail
+    from rest_framework.test import APIClient
+    c = APIClient()
+    r = c.post(
+        reverse("v1:auth:email-verification-confirm"),
+        {"token": token.token},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.django_db
+def test_verification_confirm_consumes_token_atomically(settings):
+    settings.EMAIL_VERIFICATION_ENABLED = True
+    from apps.q_accounts.models import EmailVerificationToken
+    from rest_framework.test import APIClient
+
+    user = UserFactory(is_verified=False)
+    token = EmailVerificationToken.issue(user)
+
+    c = APIClient()
+    # First call succeeds
+    r1 = c.post(
+        reverse("v1:auth:email-verification-confirm"),
+        {"token": token.token},
+    )
+    assert r1.status_code == 200
+
+    # Second call fails (token consumed)
+    r2 = c.post(
+        reverse("v1:auth:email-verification-confirm"),
+        {"token": token.token},
+    )
+    assert r2.status_code == 400
+
+
+# ═════════════════════════════════════════════════════════════════
+# Password edge cases
+# ═════════════════════════════════════════════════════════════════
+
+@pytest.mark.django_db
+def test_change_password_rejects_common_password(user_client):
+    r = user_client.post(
+        reverse("v1:auth:change-password"),
+        {"old_password": DEFAULT_PASSWORD, "new_password": "password"},
+        format="json",
+    )
+    # Common password should fail validation
+    assert r.status_code == 400
+
+
+@pytest.mark.django_db
+def test_register_rejects_common_password(api_client, settings):
+    settings.ALLOW_PUBLIC_REGISTRATION = True
+    r = api_client.post(
+        reverse("v1:auth:register"),
+        {
+            "email": "x@example.com",
+            "password": "12345678",
+            "password2": "12345678",
+        },
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.django_db
+def test_me_patch_cannot_change_is_active_via_api(user_client):
+    user_client.patch(
+        reverse("v1:auth:me"),
+        {"is_active": False},
+        format="json",
+    )
+    user_client.user.refresh_from_db()
+    assert user_client.user.is_active is True
+
+
+# ═════════════════════════════════════════════════════════════════
+# Admin bulk operations (regression: bulk endpoint doesn't exist)
+# ═════════════════════════════════════════════════════════════════
+
+@pytest.mark.django_db
+def test_admin_can_patch_multiple_users_individually(admin_client):
+    users = [UserFactory() for _ in range(3)]
+    for u in users:
+        r = admin_client.patch(
+            reverse("v1:users:users-detail", args=[u.id]),
+            {"is_active": False},
+            format="json",
+        )
+        assert r.status_code == 200
+    for u in users:
+        u.refresh_from_db()
+        assert u.is_active is False

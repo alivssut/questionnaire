@@ -1,13 +1,21 @@
 'use client';
 
+import { Suspense, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Zap, ArrowLeft, CheckCircle2, BarChart3, Users, FileText,
-  Shield, Sparkles, LayoutDashboard,
+  Shield, Sparkles, LayoutDashboard, UserPlus, LogIn,
 } from 'lucide-react';
+
 import { useAuth } from '@/shared/providers/auth-provider';
 import { Button } from '@/shared/components/ui/button';
 import { ThemeToggle } from '@/shared/components/theme/theme-toggle';
+import { PageLoader } from '@/shared/components/ui/spinner';
+
+// ═════════════════════════════════════════════════════════════════
+// Static content
+// ═════════════════════════════════════════════════════════════════
 
 const features = [
   {
@@ -18,7 +26,7 @@ const features = [
   {
     icon: Users,
     title: 'تخصیص هوشمند',
-    description: 'به کاربران یا تیم‌های مختلف تخصیص دهید و پیشرفت را رصد کنید.',
+    description: 'به کاربران یا تیم‌های مختلف تخصیص دهید و پیشرفت را لحظه‌ای رصد کنید.',
   },
   {
     icon: BarChart3,
@@ -28,25 +36,76 @@ const features = [
   {
     icon: Shield,
     title: 'امنیت و حریم خصوصی',
-    description: 'پاسخ‌های ناشناس، کنترل دسترسی و لاگ کامل رویدادها.',
+    description: 'پاسخ‌های ناشناس، کنترل دسترسی نقش‌محور و لاگ کامل رویدادها.',
   },
 ];
 
 const steps = [
-  { n: 1, title: 'پرسشنامه بسازید', desc: 'از میان ۲۲ نوع سوال انتخاب کنید.' },
-  { n: 2, title: 'منتشر کنید', desc: 'به کاربران تخصیص دهید یا عمومی کنید.' },
-  { n: 3, title: 'تحلیل کنید', desc: 'در لحظه نتایج را ببینید و تصمیم بگیرید.' },
+  {
+    n: 1,
+    title: 'پرسشنامه بسازید',
+    desc: 'از میان بیش از ۲۰ نوع سوال متنوع انتخاب کنید.',
+  },
+  {
+    n: 2,
+    title: 'منتشر کنید',
+    desc: 'به کاربران تخصیص دهید یا برای همه عمومی کنید.',
+  },
+  {
+    n: 3,
+    title: 'تحلیل کنید',
+    desc: 'در لحظه نتایج را ببینید و بر اساس داده تصمیم بگیرید.',
+  },
 ];
 
-export default function LandingPage() {
-  const { isAuthenticated, isLoading } = useAuth();
+// ═════════════════════════════════════════════════════════════════
+// Content component (needs useSearchParams, so wrapped in Suspense)
+// ═════════════════════════════════════════════════════════════════
 
+function LandingContent() {
+  const { isAuthenticated, isLoading } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // `?preview=1` lets an authenticated user view the marketing page
+  // (useful for demos / documentation / "view site" links).
+  const preview = searchParams.get('preview') === '1';
+
+  // ── Redirect authenticated users to the dashboard ──────────
+  //
+  // Standard SaaS behavior: a signed-in user hitting `/` most likely
+  // wants to be inside the app. We wait until `isLoading` is false to
+  // avoid a premature redirect that would flash during auth hydration.
+  useEffect(() => {
+    if (isLoading || preview) return;
+    if (isAuthenticated) {
+      router.replace('/dashboard');
+    }
+  }, [isAuthenticated, isLoading, preview, router]);
+
+  // ── Loading state (prevents UI flash) ──────────────────────
+  //
+  // If auth is still being determined AND we're not in preview mode,
+  // show the loader instead of the marketing page. When auth resolves
+  // to "not authenticated", we render the landing normally.
+  if (isLoading && !preview) {
+    return <PageLoader />;
+  }
+
+  // ── Authenticated + redirecting ────────────────────────────
+  if (isAuthenticated && !preview) {
+    return <PageLoader />;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Render (guest view or preview mode)
+  // ═══════════════════════════════════════════════════════════
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
+      {/* ── Header ─────────────────────────────────────────── */}
       <header className="sticky top-0 z-40 bg-background/80 backdrop-blur border-b border-border">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center gap-4">
-          <Link href="/" className="flex items-center gap-2.5">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-4">
+          <Link href="/" className="flex items-center gap-2.5 shrink-0">
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center shadow-sm">
               <Zap size={16} className="text-primary-foreground" />
             </div>
@@ -54,41 +113,55 @@ export default function LandingPage() {
           </Link>
 
           <nav className="hidden md:flex items-center gap-6 mr-8 text-sm">
-            <a href="#features" className="text-muted-foreground hover:text-foreground transition-colors">امکانات</a>
-            <a href="#how" className="text-muted-foreground hover:text-foreground transition-colors">چطور کار می‌کند</a>
+            <a
+              href="#features"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              امکانات
+            </a>
+            <a
+              href="#how"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              چطور کار می‌کند
+            </a>
           </nav>
 
           <div className="mr-auto flex items-center gap-2">
             <ThemeToggle />
-            {!isLoading && (
-              isAuthenticated ? (
-                <Link href="/dashboard">
-                  <Button size="sm">
-                    <LayoutDashboard size={14} /> داشبورد
+
+            {preview && isAuthenticated ? (
+              // Preview mode: show a way back to the app.
+              <Link href="/dashboard">
+                <Button size="sm">
+                  <LayoutDashboard size={14} /> بازگشت به داشبورد
+                </Button>
+              </Link>
+            ) : (
+              <>
+                <Link href="/login">
+                  <Button variant="ghost" size="sm">
+                    <LogIn size={14} /> ورود
                   </Button>
                 </Link>
-              ) : (
-                <>
-                  <Link href="/login">
-                    <Button variant="ghost" size="sm">ورود</Button>
-                  </Link>
-                  <Link href="/register" className="hidden sm:inline-flex">
-                    <Button size="sm">ثبت‌نام رایگان</Button>
-                  </Link>
-                </>
-              )
+                <Link href="/register" className="hidden sm:inline-flex">
+                  <Button size="sm">
+                    <UserPlus size={14} /> ثبت‌نام رایگان
+                  </Button>
+                </Link>
+              </>
             )}
           </div>
         </div>
       </header>
 
-      {/* Hero */}
+      {/* ── Hero ───────────────────────────────────────────── */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-b from-primary/5 via-transparent to-transparent" />
-        <div className="relative max-w-7xl mx-auto px-6 py-20 lg:py-32">
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 py-20 lg:py-32">
           <div className="max-w-3xl mx-auto text-center">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium mb-6">
-              <Sparkles size={12} /> نسخه جدید با ۲۲ نوع سوال
+              <Sparkles size={12} /> نسخه جدید با بیش از ۲۰ نوع سوال
             </div>
 
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold leading-tight mb-6 text-balance">
@@ -105,49 +178,62 @@ export default function LandingPage() {
             </p>
 
             <div className="flex items-center justify-center gap-3 flex-wrap">
-              <Link href={isAuthenticated ? '/dashboard' : '/register'}>
+              <Link href="/register">
                 <Button size="lg">
-                  {isAuthenticated ? 'رفتن به داشبورد' : 'شروع رایگان'}
-                  <ArrowLeft size={16} />
+                  شروع رایگان <ArrowLeft size={16} />
                 </Button>
               </Link>
               <Link href="/login">
-                <Button variant="outline" size="lg">ورود به حساب</Button>
+                <Button variant="outline" size="lg">
+                  ورود به حساب
+                </Button>
               </Link>
             </div>
 
-            <div className="flex items-center justify-center gap-6 mt-10 text-sm text-muted-foreground">
+            <div className="flex items-center justify-center gap-6 mt-10 text-sm text-muted-foreground flex-wrap">
               <span className="flex items-center gap-1.5">
-                <CheckCircle2 size={14} className="text-emerald-500" /> بدون نیاز به کارت اعتباری
+                <CheckCircle2 size={14} className="text-emerald-500" />
+                بدون نیاز به کارت اعتباری
               </span>
               <span className="flex items-center gap-1.5">
-                <CheckCircle2 size={14} className="text-emerald-500" /> راه‌اندازی در ۲ دقیقه
+                <CheckCircle2 size={14} className="text-emerald-500" />
+                راه‌اندازی در ۲ دقیقه
               </span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Features */}
-      <section id="features" className="py-20 border-t border-border">
-        <div className="max-w-7xl mx-auto px-6">
+      {/* ── Features ───────────────────────────────────────── */}
+      <section
+        id="features"
+        className="py-20 border-t border-border scroll-mt-20"
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="text-center mb-14">
-            <h2 className="text-3xl font-bold mb-3">همه‌چیز برای نظرسنجی حرفه‌ای</h2>
+            <h2 className="text-3xl font-bold mb-3">
+              همه‌چیز برای نظرسنجی حرفه‌ای
+            </h2>
             <p className="text-muted-foreground max-w-xl mx-auto">
               ابزارهایی که برای ساختن پرسشنامه‌های مؤثر نیاز دارید.
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {features.map((f) => {
               const Icon = f.icon;
               return (
-                <div key={f.title} className="p-6 rounded-2xl border border-border bg-card hover:shadow-md transition-shadow">
+                <div
+                  key={f.title}
+                  className="p-6 rounded-2xl border border-border bg-card hover:shadow-md hover:border-primary/30 transition-all"
+                >
                   <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
                     <Icon size={20} className="text-primary" />
                   </div>
                   <h3 className="font-bold mb-2">{f.title}</h3>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{f.description}</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    {f.description}
+                  </p>
                 </div>
               );
             })}
@@ -155,11 +241,17 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* How it works */}
-      <section id="how" className="py-20 bg-muted/30 border-t border-border">
-        <div className="max-w-7xl mx-auto px-6">
+      {/* ── How it works ───────────────────────────────────── */}
+      <section
+        id="how"
+        className="py-20 bg-muted/30 border-t border-border scroll-mt-20"
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="text-center mb-14">
             <h2 className="text-3xl font-bold mb-3">در سه مرحله ساده</h2>
+            <p className="text-muted-foreground max-w-xl mx-auto">
+              از ایده تا تحلیل، همه در یک پلتفرم.
+            </p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
@@ -173,7 +265,10 @@ export default function LandingPage() {
                   <p className="text-sm text-muted-foreground">{s.desc}</p>
                 </div>
                 {i < steps.length - 1 && (
-                  <ArrowLeft size={20} className="hidden md:block absolute top-6 -left-3 text-muted-foreground/40" />
+                  <ArrowLeft
+                    size={20}
+                    className="hidden md:block absolute top-6 -left-3 text-muted-foreground/40"
+                  />
                 )}
               </div>
             ))}
@@ -181,36 +276,62 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* CTA */}
+      {/* ── CTA ────────────────────────────────────────────── */}
       <section className="py-20 border-t border-border">
-        <div className="max-w-3xl mx-auto px-6 text-center">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 text-center">
           <h2 className="text-3xl font-bold mb-4">آماده شروع هستید؟</h2>
           <p className="text-muted-foreground mb-8">
             همین امروز اولین پرسشنامه‌تان را بسازید.
           </p>
-          <Link href={isAuthenticated ? '/dashboard' : '/register'}>
+          <Link href="/register">
             <Button size="lg">
-              {isAuthenticated ? 'رفتن به داشبورد' : 'شروع رایگان'}
-              <ArrowLeft size={16} />
+              شروع رایگان <ArrowLeft size={16} />
             </Button>
           </Link>
         </div>
       </section>
 
-      {/* Footer */}
+      {/* ── Footer ─────────────────────────────────────────── */}
       <footer className="border-t border-border py-8">
-        <div className="max-w-7xl mx-auto px-6 flex items-center justify-between flex-wrap gap-4 text-sm text-muted-foreground">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between flex-wrap gap-4 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
             <Zap size={14} className="text-primary" />
             <span>© ۱۴۰۴ FORMly. تمامی حقوق محفوظ است.</span>
           </div>
           <div className="flex items-center gap-6">
-            <a href="#" className="hover:text-foreground">درباره ما</a>
-            <a href="#" className="hover:text-foreground">حریم خصوصی</a>
-            <a href="#" className="hover:text-foreground">تماس</a>
+            <a
+              href="#features"
+              className="hover:text-foreground transition-colors"
+            >
+              امکانات
+            </a>
+            <a
+              href="#how"
+              className="hover:text-foreground transition-colors"
+            >
+              راهنما
+            </a>
+            <Link
+              href="/login"
+              className="hover:text-foreground transition-colors"
+            >
+              ورود
+            </Link>
           </div>
         </div>
       </footer>
     </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════
+// Page wrapper
+// ═════════════════════════════════════════════════════════════════
+
+export default function LandingPage() {
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <LandingContent />
+    </Suspense>
   );
 }

@@ -1,6 +1,32 @@
+import sys
 from .base import *  # noqa
 
-DEBUG = True
+# ═════════════════════════════════════════════════════════════════
+# Detect test runs early
+# ═════════════════════════════════════════════════════════════════
+#
+# `pytest-django` flips DEBUG to False during tests. That breaks the
+# debug toolbar (its URLs aren't registered when DEBUG=False, but its
+# middleware is still attached). Detect pytest here and skip the
+# toolbar entirely.
+#
+# Detection methods (any one is enough):
+#   - "pytest" is already imported (pytest-django loads first)
+#   - the entrypoint is pytest
+#   - explicit env var (set by CI, Docker test target, etc.)
+# ═════════════════════════════════════════════════════════════════
+
+_IS_TESTING = (
+    "pytest" in sys.modules
+    or "pytest" in sys.argv[0]
+    or "PYTEST_CURRENT_TEST" in __import__("os").environ
+)
+
+# ═════════════════════════════════════════════════════════════════
+# Basic dev overrides
+# ═════════════════════════════════════════════════════════════════
+
+DEBUG = not _IS_TESTING
 ALLOWED_HOSTS = ["*"]
 
 # Local dev: allow all origins for convenience
